@@ -1,0 +1,22 @@
+[package]
+name = "parakses"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+uuid = { version = "1", features = ["v4"] }
+flate2 = { version = "1", optional = true }
+unicode-normalization = "0.1"
+crc32fast = "1"
+
+[features]
+default = ["compression"]
+compression = ["flate2"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("default", "compression"))'] }
