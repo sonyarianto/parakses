@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Extract { volume, src, dst } => {
             let hfs = open_volume(&cli, *volume)?;
-            let size = hfs.extract_file(src, &std::path::Path::new(dst))?;
+            let size = hfs.extract_file(src, std::path::Path::new(dst))?;
             println!("Extracted {} bytes from '{}' to '{}'", size, src, dst);
         }
     }

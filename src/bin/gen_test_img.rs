@@ -71,6 +71,7 @@ fn build_alloc_bitmap(disk: &mut [u8]) {
     disk[off + 1] = 0x01;
 }
 
+#[allow(clippy::too_many_arguments)]
 fn btree_header_node(
     disk: &mut [u8],
     alloc_block: u32,
@@ -138,7 +139,7 @@ fn catalog_leaf_node(disk: &mut [u8], alloc_block: u32) {
     }
 
     // Value: FileRecord
-    let v2 = r2_off + key_len as usize;
+    let v2 = r2_off + key_len;
     disk[v2..v2 + 2].copy_from_slice(&be16(2)); // recordType = kHFSPlusFileRecord
     disk[v2 + 8..v2 + 12].copy_from_slice(&be32(2)); // fileID
     // Data fork (80 bytes at offset 72)

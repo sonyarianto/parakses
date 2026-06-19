@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 #![allow(non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::upper_case_acronyms)]
 
 use std::mem;
 use std::path::Path;
@@ -394,23 +395,22 @@ fn load_volumes(state: &mut GuiState) {
 
     if let Some(img) = &state.image_path {
         let path = Path::new(img);
-        if path.exists() {
-            if let Ok(drive) = blockio::filedevice::FileDevice::open(path) {
-                if let Ok(vols) = WindowsVolumeEnumerator::enumerate_from(&drive) {
-                    for v in &vols {
-                        for (pi, _part) in v.hfs_partitions.iter().enumerate() {
-                            let display = format!("Image: {} (partition {})", img, pi);
-                            items.push(VolumeEntry {
-                                display,
-                                drive_index: v.drive_index,
-                                partition_index: pi,
-                                info: WindowsVolume {
-                                    drive_index: v.drive_index,
-                                    hfs_partitions: v.hfs_partitions.clone(),
-                                },
-                            });
-                        }
-                    }
+        if path.exists()
+            && let Ok(drive) = blockio::filedevice::FileDevice::open(path)
+            && let Ok(vols) = WindowsVolumeEnumerator::enumerate_from(&drive)
+        {
+            for v in &vols {
+                for (pi, _part) in v.hfs_partitions.iter().enumerate() {
+                    let display = format!("Image: {} (partition {})", img, pi);
+                    items.push(VolumeEntry {
+                        display,
+                        drive_index: v.drive_index,
+                        partition_index: pi,
+                        info: WindowsVolume {
+                            drive_index: v.drive_index,
+                            hfs_partitions: v.hfs_partitions.clone(),
+                        },
+                    });
                 }
             }
         }
@@ -833,7 +833,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_NOTIFY => {
             let nmhdr = &*(lparam.0 as *const NMHDR);
-            if nmhdr.hwndFrom == state.hwnd_list && nmhdr.code == (NM_DBLCLK as u32) {
+            if nmhdr.hwndFrom == state.hwnd_list && nmhdr.code == NM_DBLCLK {
                 on_list_double_click(state);
             }
             LRESULT(0)
@@ -1030,7 +1030,7 @@ fn main() {
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc = Some(wnd_proc);
         wc.hInstance = hinst;
-        wc.hIcon = LoadIconW(hinst, IDI_APPLICATION).unwrap_or(HICON::default());
+        wc.hIcon = LoadIconW(hinst, IDI_APPLICATION).unwrap_or_default();
         wc.hCursor = LoadCursorW(None, IDC_ARROW).unwrap_or(HCURSOR::default());
         wc.hbrBackground = HBRUSH((COLOR_BTNFACE.0 + 1) as *mut std::ffi::c_void);
         wc.lpszClassName = w!("parakses_gui");
