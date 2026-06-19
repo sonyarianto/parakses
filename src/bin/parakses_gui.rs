@@ -149,6 +149,8 @@ struct GuiState {
     hwnd_combo: HWND,
     hwnd_list: HWND,
     hwnd_path: HWND,
+    hwnd_up: HWND,
+    hwnd_extract: HWND,
     hwnd_status: HWND,
 }
 
@@ -702,10 +704,18 @@ unsafe extern "system" fn wnd_proc(
             let h = ((lparam.0 >> 16) & 0xFFFF) as i32;
             let pad = 4i32;
             let cy = 26i32;
-            let _ = SetWindowPos(state.hwnd_combo, HWND(ptr::null_mut()), pad, pad, 280, 200, SET_WINDOW_POS_FLAGS(0x0004));
-            let path_x = pad + 280 + pad;
-            let path_w = (w - path_x - pad * 3 - 130).max(50);
+            let combo_w = 200i32;
+            let btn_up_w = 50i32;
+            let btn_extract_w = 70i32;
+            let btn_gap = 4i32;
+            let _ = SetWindowPos(state.hwnd_combo, HWND(ptr::null_mut()), pad, pad, combo_w, 200, SET_WINDOW_POS_FLAGS(0x0004));
+            let path_x = pad + combo_w + pad;
+            let buttons_w = btn_up_w + btn_gap + btn_extract_w + pad;
+            let path_w = (w - path_x - pad - buttons_w).max(50);
+            let btn_x = path_x + path_w + pad;
             let _ = SetWindowPos(state.hwnd_path, HWND(ptr::null_mut()), path_x, pad, path_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
+            let _ = SetWindowPos(state.hwnd_up, HWND(ptr::null_mut()), btn_x, pad, btn_up_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
+            let _ = SetWindowPos(state.hwnd_extract, HWND(ptr::null_mut()), btn_x + btn_up_w + btn_gap, pad, btn_extract_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
             let list_top = cy + pad * 2;
             let _ = SetWindowPos(state.hwnd_list, HWND(ptr::null_mut()), pad, list_top, w - pad * 2, h - list_top - pad - 20, SET_WINDOW_POS_FLAGS(0x0004));
             let _ = SendMessageW(state.hwnd_status, SB_SETTEXT, WPARAM(0), LPARAM(0));
@@ -763,7 +773,7 @@ fn create_gui(hwnd: HWND) -> GuiState {
             None,
         ).unwrap();
 
-        let _ = CreateWindowExW(
+        let hwnd_up = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_WINDOWEDGE),
             w!("Button"),
             w!("Up"),
@@ -773,9 +783,9 @@ fn create_gui(hwnd: HWND) -> GuiState {
             HMENU(IDC_GO_UP as *mut _),
             hinst,
             None,
-        );
+        ).unwrap();
 
-        let _ = CreateWindowExW(
+        let hwnd_extract = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_WINDOWEDGE),
             w!("Button"),
             w!("Extract"),
@@ -785,7 +795,7 @@ fn create_gui(hwnd: HWND) -> GuiState {
             HMENU(IDC_EXTRACT as *mut _),
             hinst,
             None,
-        );
+        ).unwrap();
 
         let hwnd_list = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_CLIENTEDGE),
@@ -852,6 +862,8 @@ fn create_gui(hwnd: HWND) -> GuiState {
             hwnd_combo,
             hwnd_list,
             hwnd_path,
+            hwnd_up,
+            hwnd_extract,
             hwnd_status,
         }
     }

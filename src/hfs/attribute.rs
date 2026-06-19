@@ -1,6 +1,7 @@
 use crate::hfs::btree::BTreeReader;
 
 pub struct AttributesReader<'a> {
+    #[allow(dead_code)]
     tree: BTreeReader<'a>,
 }
 
