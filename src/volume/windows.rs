@@ -23,10 +23,15 @@ impl VolumeDiscovery for WindowsVolumeEnumerator {
 
     fn enumerate() -> anyhow::Result<Vec<Self::VolumeInfo>> {
         let mut volumes = Vec::new();
+        let mut access_denied = false;
 
         for drive_index in 0..32 {
             let drive = match PhysicalDrive::open(drive_index) {
                 Ok(d) => d,
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    access_denied = true;
+                    continue;
+                }
                 Err(_) => continue,
             };
 
@@ -61,6 +66,10 @@ impl VolumeDiscovery for WindowsVolumeEnumerator {
                     hfs_partitions,
                 });
             }
+        }
+
+        if volumes.is_empty() && access_denied {
+            anyhow::bail!("Cannot access physical drives. Run this application as Administrator.");
         }
 
         Ok(volumes)
