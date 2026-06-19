@@ -143,3 +143,170 @@ impl<'a> ForkReader<'a> {
         Ok(data[start..end].to_vec())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blockio::memfile::MemFile;
+
+    fn make_device() -> MemFile {
+        let mut data = vec![0u8; 8192]; // 16 sectors of 512
+        for i in 0..data.len() {
+            data[i] = (i % 251) as u8; // prime modulus so each sector is unique
+        }
+        MemFile::new(data, 512)
+    }
+
+    fn make_reader(device: &dyn BlockDevice, extents: Vec<HfsPlusExtentDescriptor>, fork_size: u64) -> ForkReader<'_> {
+        let mut reader = ForkReader::new(device, 0, 512, fork_size);
+        reader.set_extents(extents);
+        reader
+    }
+
+    #[test]
+    fn test_read_all_single_extent() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 2 }];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_all().unwrap();
+        assert_eq!(data.len(), 1024);
+        assert_eq!(data[0], 0);
+        assert_eq!(data[512], 10);
+    }
+
+    #[test]
+    fn test_read_all_multiple_extents() {
+        let device = make_device();
+        let extents = vec![
+            HfsPlusExtentDescriptor { start_block: 0, block_count: 1 },
+            HfsPlusExtentDescriptor { start_block: 3, block_count: 1 },
+        ];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_all().unwrap();
+        assert_eq!(data.len(), 1024);
+        assert_eq!(data[0], 0);
+        assert_eq!(data[512], 30);
+    }
+
+    #[test]
+    fn test_read_all_empty_extents() {
+        let device = make_device();
+        let reader = make_reader(&device, vec![], 0);
+        let data = reader.read_all().unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_read_all_zero_block_extent() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 0 }];
+        let reader = make_reader(&device, extents, 0);
+        let data = reader.read_all().unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_read_range_basic() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 1 }];
+        let reader = make_reader(&device, extents, 512);
+        let data = reader.read_range(0, 4).unwrap();
+        assert_eq!(data, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_read_range_entire_fork() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 1, block_count: 2 }];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_range(0, 1024).unwrap();
+        assert_eq!(data.len(), 1024);
+        assert_eq!(data[0], 10);
+        assert_eq!(data[512], 20);
+    }
+
+    #[test]
+    fn test_read_range_with_offset() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 2 }];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_range(4, 4).unwrap();
+        assert_eq!(data, vec![4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_read_range_cross_extent_boundary() {
+        let device = make_device();
+        let extents = vec![
+            HfsPlusExtentDescriptor { start_block: 0, block_count: 1 },
+            HfsPlusExtentDescriptor { start_block: 2, block_count: 1 },
+        ];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_range(508, 8).unwrap();
+        assert_eq!(data, vec![6, 7, 8, 9, 20, 21, 22, 23]);
+    }
+
+    #[test]
+    fn test_read_range_zero_length() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 1 }];
+        let reader = make_reader(&device, extents, 512);
+        let data = reader.read_range(0, 0).unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_read_range_past_fork() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 1 }];
+        let reader = make_reader(&device, extents, 512);
+        let data = reader.read_range(512, 100).unwrap();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_read_range_partial_at_end() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 1 }];
+        let reader = make_reader(&device, extents, 512);
+        let data = reader.read_range(510, 10).unwrap();
+        assert_eq!(data.len(), 2);
+    }
+
+    #[test]
+    fn test_fork_size() {
+        let device = make_device();
+        let reader = ForkReader::new(&device, 0, 512, 2048);
+        assert_eq!(reader.fork_size(), 2048);
+    }
+
+    #[test]
+    fn test_read_raw_with_volume_offset() {
+        let mut data = vec![0u8; 2048];
+        data[1024..1028].copy_from_slice(b"TEST");
+        let device = MemFile::new(data, 512);
+
+        let mut reader = ForkReader::new(&device, 1024, 512, 512);
+        reader.set_extents(vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 1 }]);
+        let result = reader.read_range(0, 4).unwrap();
+        assert_eq!(result, b"TEST");
+    }
+
+    #[test]
+    fn test_read_past_end_of_device() {
+        let device = MemFile::new(vec![0u8; 512], 512);
+        let mut reader = ForkReader::new(&device, 0, 512, 1024);
+        reader.set_extents(vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 2 }]);
+        let result = reader.read_all();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_extents_read_all_truncates() {
+        let device = make_device();
+        let extents = vec![HfsPlusExtentDescriptor { start_block: 0, block_count: 3 }];
+        let reader = make_reader(&device, extents, 1024);
+        let data = reader.read_all().unwrap();
+        assert_eq!(data.len(), 1024);
+    }
+}

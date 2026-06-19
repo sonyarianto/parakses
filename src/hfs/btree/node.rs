@@ -126,3 +126,182 @@ pub fn read_record<'a>(node_data: &'a [u8], offset: usize, next_offset: usize) -
     let end = next_offset.min(node_data.len());
     &node_data[offset..end]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_header_node_descriptor() {
+        let mut data = vec![0u8; 14];
+        data[0..4].copy_from_slice(&0u32.to_be_bytes());   // fLink
+        data[4..8].copy_from_slice(&0u32.to_be_bytes());   // bLink
+        data[8] = 0;                                        // kind = header
+        data[9] = 0;                                        // height
+        data[10..12].copy_from_slice(&1u16.to_be_bytes()); // numRecords
+        let desc = NodeDescriptor::parse(&data).unwrap();
+        assert_eq!(desc.f_link, 0);
+        assert_eq!(desc.b_link, 0);
+        assert_eq!(desc.kind, NodeType::HeaderNode);
+        assert_eq!(desc.height, 0);
+        assert_eq!(desc.num_records, 1);
+    }
+
+    #[test]
+    fn test_leaf_node_descriptor() {
+        let mut data = vec![0u8; 14];
+        data[0..4].copy_from_slice(&5u32.to_be_bytes());   // fLink
+        data[4..8].copy_from_slice(&3u32.to_be_bytes());   // bLink
+        data[8] = 2;                                        // kind = leaf
+        data[9] = 1;                                        // height
+        data[10..12].copy_from_slice(&2u16.to_be_bytes()); // numRecords
+        let desc = NodeDescriptor::parse(&data).unwrap();
+        assert_eq!(desc.f_link, 5);
+        assert_eq!(desc.b_link, 3);
+        assert_eq!(desc.kind, NodeType::LeafNode);
+        assert_eq!(desc.height, 1);
+        assert_eq!(desc.num_records, 2);
+    }
+
+    #[test]
+    fn test_index_node_descriptor() {
+        let mut data = vec![0u8; 14];
+        data[8] = 1;
+        let desc = NodeDescriptor::parse(&data).unwrap();
+        assert_eq!(desc.kind, NodeType::IndexNode);
+    }
+
+    #[test]
+    fn test_map_node_descriptor() {
+        let mut data = vec![0u8; 14];
+        data[8] = 3;
+        let desc = NodeDescriptor::parse(&data).unwrap();
+        assert_eq!(desc.kind, NodeType::MapNode);
+    }
+
+    #[test]
+    fn test_reject_invalid_node_type() {
+        let data = vec![0u8; 14];
+        for &t in &[4u8, 5, 0xFF] {
+            let mut d = data.clone();
+            d[8] = t;
+            assert!(NodeDescriptor::parse(&d).is_err());
+        }
+    }
+
+    #[test]
+    fn test_node_descriptor_too_short() {
+        assert!(NodeDescriptor::parse(&[0u8; 13]).is_err());
+        assert!(NodeDescriptor::parse(&[0u8; 0]).is_err());
+    }
+
+    #[test]
+    fn test_header_record_parse() {
+        let mut data = vec![0u8; 106];
+        data[14..16].copy_from_slice(&1u16.to_be_bytes());       // treeDepth
+        data[16..20].copy_from_slice(&6u32.to_be_bytes());       // rootNode
+        data[20..24].copy_from_slice(&2u32.to_be_bytes());       // leafRecords
+        data[24..28].copy_from_slice(&6u32.to_be_bytes());       // firstLeafNode
+        data[28..32].copy_from_slice(&6u32.to_be_bytes());       // lastLeafNode
+        data[32..34].copy_from_slice(&512u16.to_be_bytes());     // nodeSize
+        data[34..36].copy_from_slice(&516u16.to_be_bytes());     // maxKeyLen
+        data[36..40].copy_from_slice(&2u32.to_be_bytes());       // totalNodes
+        data[40..44].copy_from_slice(&0u32.to_be_bytes());       // freeNodes
+        data[44..48].copy_from_slice(&8192u32.to_be_bytes());    // clumpSize
+        data[48] = 0x00;                                          // btreeType
+        data[49] = 0xCF;                                          // keyCompareType (case-insensitive)
+        data[50..54].copy_from_slice(&0x0000_0001u32.to_be_bytes()); // attributes
+
+        let hr = HeaderRecord::parse(&data).unwrap();
+        assert_eq!(hr.tree_depth, 1);
+        assert_eq!(hr.root_node, 6);
+        assert_eq!(hr.leaf_records, 2);
+        assert_eq!(hr.first_leaf_node, 6);
+        assert_eq!(hr.last_leaf_node, 6);
+        assert_eq!(hr.node_size, 512);
+        assert_eq!(hr.max_key_len, 516);
+        assert_eq!(hr.total_nodes, 2);
+        assert_eq!(hr.free_nodes, 0);
+        assert_eq!(hr.clump_size, 8192);
+        assert_eq!(hr.btree_type, 0x00);
+        assert_eq!(hr.key_compare_type, 0xCF);
+        assert_eq!(hr.attributes, 0x0000_0001);
+    }
+
+    #[test]
+    fn test_header_record_case_insensitive() {
+        let mut data = vec![0u8; 106];
+        data[32..34].copy_from_slice(&512u16.to_be_bytes());
+        data[49] = 0xCF;
+        assert!(HeaderRecord::parse(&data).unwrap().is_case_insensitive());
+        data[49] = 0xBC;
+        assert!(!HeaderRecord::parse(&data).unwrap().is_case_insensitive());
+    }
+
+    #[test]
+    fn test_header_record_too_short() {
+        assert!(HeaderRecord::parse(&[0u8; 105]).is_err());
+        assert!(HeaderRecord::parse(&[0u8; 0]).is_err());
+    }
+
+    #[test]
+    fn test_header_record_reject_small_node_size() {
+        let mut data = vec![0u8; 106];
+        data[32..34].copy_from_slice(&256u16.to_be_bytes());
+        assert!(HeaderRecord::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_header_record_reject_non_power_of_two_node_size() {
+        let mut data = vec![0u8; 106];
+        data[32..34].copy_from_slice(&640u16.to_be_bytes());
+        assert!(HeaderRecord::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_record_offsets() {
+        // Node with 2 records at offsets 14 and 94
+        let mut node = vec![0u8; 512];
+        let ot_start = 512 - 4; // 2 records * 2 bytes
+        node[ot_start..ot_start+2].copy_from_slice(&14u16.to_be_bytes());
+        node[ot_start+2..ot_start+4].copy_from_slice(&94u16.to_be_bytes());
+        let offsets = record_offsets(&node, 2, 512);
+        assert_eq!(offsets, vec![14, 94]);
+    }
+
+    #[test]
+    fn test_record_offsets_empty() {
+        let node = vec![0u8; 512];
+        let offsets = record_offsets(&node, 0, 512);
+        assert!(offsets.is_empty());
+    }
+
+    #[test]
+    fn test_record_offsets_truncated_data() {
+        // Node data shorter than offset table
+        let node = vec![0u8; 10];
+        let offsets = record_offsets(&node, 2, 512);
+        assert!(offsets.is_empty());
+    }
+
+    #[test]
+    fn test_read_record() {
+        let node = b"abcdefghijklmnopqrstuvwxyz";
+        let rec = read_record(node, 2, 5);
+        assert_eq!(rec, b"cde");
+    }
+
+    #[test]
+    fn test_read_record_clamped() {
+        let node = b"abcdefgh";
+        let rec = read_record(node, 5, 100);
+        assert_eq!(rec, b"fgh");
+    }
+
+    #[test]
+    fn test_read_record_zero_length() {
+        let node = b"abcdefgh";
+        let rec = read_record(node, 3, 3);
+        assert_eq!(rec, b"");
+    }
+}

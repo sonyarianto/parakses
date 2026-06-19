@@ -76,3 +76,32 @@ impl<'a> ExtentsOverflowReader<'a> {
         buf
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_key_format() {
+        let key = ExtentsOverflowReader::encode_key(42, 0, 7);
+        assert_eq!(key.len(), 9);
+        assert_eq!(&key[..4], &42u32.to_be_bytes());
+        assert_eq!(key[4], 0);
+        assert_eq!(&key[5..], &7u32.to_be_bytes());
+    }
+
+    #[test]
+    fn test_encode_key_resource_fork() {
+        let key = ExtentsOverflowReader::encode_key(1, 1, 0);
+        assert_eq!(key[4], 1);
+    }
+
+    #[test]
+    fn test_encode_key_large_values() {
+        let key = ExtentsOverflowReader::encode_key(0xFFFFFFFF, 0xFF, 0xFFFFFFFF);
+        assert_eq!(key.len(), 9);
+        assert_eq!(&key[..4], &0xFFFFFFFFu32.to_be_bytes());
+        assert_eq!(key[4], 0xFF);
+        assert_eq!(&key[5..], &0xFFFFFFFFu32.to_be_bytes());
+    }
+}

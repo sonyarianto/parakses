@@ -138,8 +138,177 @@ pub fn parse_catalog_record(value: &[u8]) -> anyhow::Result<CatalogRecordData> {
                 node_name: name,
             }))
         }
-        _ => anyhow::bail!("Unknown catalog record type: {:#06x}", record_type),
+            _ => anyhow::bail!("Unknown catalog record type: {:#06x}", record_type),
+        }
     }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder_record_bytes() -> Vec<u8> {
+        let mut d = vec![0u8; 72];
+        d[0..2].copy_from_slice(&1u16.to_be_bytes());     // recordType = kHFSPlusFolderRecord
+        d[2..4].copy_from_slice(&0u16.to_be_bytes());     // flags
+        d[4..8].copy_from_slice(&3u32.to_be_bytes());     // valence = 3 children
+        d[8..12].copy_from_slice(&1u32.to_be_bytes());    // folderID = 1 (root)
+        d[64..68].copy_from_slice(&2u32.to_be_bytes());   // textEncoding
+        d[68..72].copy_from_slice(&1u32.to_be_bytes());   // folderCount
+        d
+    }
+
+    fn file_record_bytes() -> Vec<u8> {
+        let mut d = vec![0u8; 232];
+        d[0..2].copy_from_slice(&2u16.to_be_bytes());     // recordType = kHFSPlusFileRecord
+        d[2..4].copy_from_slice(&1u16.to_be_bytes());     // flags (compressed)
+        d[8..12].copy_from_slice(&42u32.to_be_bytes());   // fileID
+        d[64..68].copy_from_slice(&0u32.to_be_bytes());   // textEncoding
+        // dataFork at offset 72
+        d[72..80].copy_from_slice(&1024u64.to_be_bytes()); // logicalSize
+        d[84..88].copy_from_slice(&2u32.to_be_bytes());    // totalBlocks
+        d[88..96].copy_from_slice(&[0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x02]); // extent
+        // resourceFork at offset 152
+        d[152..160].copy_from_slice(&0u64.to_be_bytes());  // logicalSize = 0
+        d
+    }
+
+    fn thread_record_bytes() -> Vec<u8> {
+        let name = "somename";
+        let name_utf16: Vec<u16> = name.encode_utf16().collect();
+        let size = 6 + name_utf16.len() * 2;
+        let mut d = vec![0u8; size];
+        d[0..2].copy_from_slice(&3u16.to_be_bytes());     // recordType = kHFSPlusFolderThread
+        d[4..6].copy_from_slice(&(name_utf16.len() as u16).to_be_bytes());
+        for (i, &c) in name_utf16.iter().enumerate() {
+            d[6 + i * 2..8 + i * 2].copy_from_slice(&c.to_be_bytes());
+        }
+        d
+    }
+
+    #[test]
+    fn test_parse_folder_record() {
+        let rec = parse_catalog_record(&folder_record_bytes()).unwrap();
+        match rec {
+            CatalogRecordData::Folder(f) => {
+                assert_eq!(f.record_type, 1);
+                assert_eq!(f.flags, 0);
+                assert_eq!(f.valence, 3);
+                assert_eq!(f.folder_id, 1);
+                assert_eq!(f.text_encoding, 2);
+                assert_eq!(f.folder_count, 1);
+            }
+            _ => panic!("Expected Folder"),
+        }
+    }
+
+    #[test]
+    fn test_parse_file_record() {
+        let rec = parse_catalog_record(&file_record_bytes()).unwrap();
+        match rec {
+            CatalogRecordData::File(f) => {
+                assert_eq!(f.record_type, 2);
+                assert_eq!(f.flags, 1);
+                assert_eq!(f.file_id, 42);
+                assert!(f.is_compressed());
+                assert_eq!(f.data_fork.logical_size, 1024);
+                assert_eq!(f.data_fork.total_blocks, 2);
+                assert_eq!(f.data_fork.extents[0].start_block, 10);
+                assert_eq!(f.resource_fork.logical_size, 0);
+            }
+            _ => panic!("Expected File"),
+        }
+    }
+
+    #[test]
+    fn test_parse_thread_record_folder_thread() {
+        let rec = parse_catalog_record(&thread_record_bytes()).unwrap();
+        match rec {
+            CatalogRecordData::Thread(t) => {
+                assert_eq!(t.record_type, 0x0003);
+                assert_eq!(t.node_name, "somename");
+            }
+            _ => panic!("Expected Thread"),
+        }
+    }
+
+    #[test]
+    fn test_parse_thread_record_file_thread() {
+        let mut d = thread_record_bytes();
+        d[0..2].copy_from_slice(&4u16.to_be_bytes());
+        let rec = parse_catalog_record(&d).unwrap();
+        match rec {
+            CatalogRecordData::Thread(t) => {
+                assert_eq!(t.record_type, 0x0004);
+            }
+            _ => panic!("Expected Thread"),
+        }
+    }
+
+    #[test]
+    fn test_parse_folder_record_too_short() {
+        let d = vec![0u8; 10];
+        assert!(parse_catalog_record(&d).is_err());
+    }
+
+    #[test]
+    fn test_parse_file_record_too_short() {
+        let d = vec![0u8; 100];
+        assert!(parse_catalog_record(&d).is_err());
+    }
+
+    #[test]
+    fn test_parse_thread_record_too_short() {
+        let mut d = vec![0u8; 4];
+        d[0..2].copy_from_slice(&3u16.to_be_bytes());
+        assert!(parse_catalog_record(&d).is_err());
+    }
+
+    #[test]
+    fn test_parse_unknown_record_type() {
+        let mut d = vec![0u8; 10];
+        d[0..2].copy_from_slice(&0xFFFFu16.to_be_bytes());
+        assert!(parse_catalog_record(&d).is_err());
+    }
+
+    #[test]
+    fn test_file_id() {
+        let folder = CatalogRecordData::Folder(CatalogFolder {
+            record_type: 1, flags: 0, valence: 1, folder_id: 5,
+            create_date: 0, content_mod_date: 0, attribute_mod_date: 0,
+            access_date: 0, backup_date: 0, text_encoding: 0, folder_count: 0,
+        });
+        assert_eq!(folder.file_id(), Some(5));
+        assert!(folder.is_directory());
+
+        let file = CatalogRecordData::File(CatalogFile {
+            record_type: 2, flags: 0, file_id: 99, create_date: 0,
+            content_mod_date: 0, attribute_mod_date: 0, access_date: 0,
+            backup_date: 0, text_encoding: 0,
+            data_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
+            resource_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
+        });
+        assert_eq!(file.file_id(), Some(99));
+        assert!(!file.is_directory());
+
+        let thread = CatalogRecordData::Thread(CatalogThread {
+            record_type: 3, node_name: String::new(),
+        });
+        assert_eq!(thread.file_id(), None);
+        assert!(!thread.is_directory());
+    }
+
+    #[test]
+    fn test_file_not_compressed() {
+        let mut d = file_record_bytes();
+        d[2..4].copy_from_slice(&0u16.to_be_bytes());
+        let rec = parse_catalog_record(&d).unwrap();
+        match rec {
+            CatalogRecordData::File(f) => assert!(!f.is_compressed()),
+            _ => panic!("Expected File"),
+        }
+    }
+
+
 }
 
 pub struct CatalogReader<'a> {

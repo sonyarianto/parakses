@@ -222,7 +222,7 @@ fn read_gpt_entries(
         ));
     }
 
-    let start_sector = header.partition_entry_lba / u64::from(device.sector_size());
+    let start_sector = header.partition_entry_lba;
 
     let mut entries = Vec::with_capacity(total_entries);
 
@@ -291,4 +291,192 @@ fn read_gpt_entries(
 
 pub fn partition_sector_count(sector_count: u64) -> u64 {
     sector_count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blockio::memfile::MemFile;
+
+    fn mbr_disk(partitions: &[(u8, u64, u64)]) -> Vec<u8> {
+        let mut disk = vec![0u8; 512];
+        disk[0x1FE] = 0x55;
+        disk[0x1FF] = 0xAA;
+        for (i, &(ptype, start, count)) in partitions.iter().enumerate() {
+            let off = 0x1BE + i * 16;
+            disk[off + 4] = ptype;
+            disk[off + 8..off + 12].copy_from_slice(&(start as u32).to_le_bytes());
+            disk[off + 12..off + 16].copy_from_slice(&(count as u32).to_le_bytes());
+        }
+        disk
+    }
+
+    fn make_memfile(data: Vec<u8>) -> MemFile {
+        MemFile::new(data, 512)
+    }
+
+    #[test]
+    fn test_detect_mbr_table() {
+        let disk = mbr_disk(&[(0xAF, 1, 255)]);
+        let device = make_memfile(disk.clone());
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Mbr(parts) => {
+                assert_eq!(parts.len(), 1);
+                assert_eq!(parts[0].partition_type, 0xAF);
+                assert_eq!(parts[0].start_lba, 1);
+                assert_eq!(parts[0].sector_count, 255);
+            }
+            _ => panic!("Expected MBR"),
+        }
+    }
+
+    #[test]
+    fn test_detect_mbr_multiple() {
+        let disk = mbr_disk(&[(0xAF, 1, 100), (0x0C, 101, 200), (0xAF, 301, 50)]);
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Mbr(parts) => {
+                assert_eq!(parts.len(), 3);
+                assert_eq!(parts[0].partition_type, 0xAF);
+                assert_eq!(parts[2].partition_type, 0xAF);
+            }
+            _ => panic!("Expected MBR"),
+        }
+    }
+
+    #[test]
+    fn test_detect_no_partition_table() {
+        let disk = vec![0u8; 512]; // no boot signature
+        let device = make_memfile(disk);
+        assert!(detect_partition_table(&device, 0).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_is_hfs_mbr() {
+        assert!(is_hfs_mbr(0xAF));
+        assert!(!is_hfs_mbr(0x0C));
+        assert!(!is_hfs_mbr(0x07));
+        assert!(!is_hfs_mbr(0x00));
+    }
+
+    #[test]
+    fn test_is_hfs_gpt() {
+        let hfs_guid = uuid::Uuid::from_bytes([
+            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA,
+            0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC,
+        ]);
+        assert!(is_hfs_gpt(&hfs_guid));
+
+        let other = uuid::Uuid::nil();
+        assert!(!is_hfs_gpt(&other));
+
+        let ntfs = uuid::Uuid::from_bytes([
+            0xEB, 0xD0, 0xA0, 0xA2, 0xB9, 0xE5, 0x44, 0x33,
+            0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
+        ]);
+        assert!(!is_hfs_gpt(&ntfs));
+    }
+
+    #[test]
+    fn test_detect_protective_mbr_fallback_to_mbr() {
+        // Protective MBR (0xEE) but no valid GPT at sector 1
+        let disk = mbr_disk(&[(0xEE, 1, 255)]);
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap();
+        assert!(table.is_some());
+    }
+
+    #[test]
+    fn test_parse_gpt() {
+        use uuid::Uuid;
+
+        // Build a disk with protective MBR + valid GPT header + GPT entries
+        let mut disk = vec![0u8; 2048]; // 4 sectors
+
+        // Sector 0: protective MBR
+        disk[0x1BE + 4] = 0xEE; // partition type
+        disk[0x1BE + 8..0x1BE + 12].copy_from_slice(&1u32.to_le_bytes()); // start LBA = 1
+        disk[0x1BE + 12..0x1BE + 16].copy_from_slice(&3u32.to_le_bytes()); // count = 3
+        disk[0x1FE] = 0x55;
+        disk[0x1FF] = 0xAA;
+
+        // Sector 1: GPT header
+        disk[512..520].copy_from_slice(b"EFI PART");
+        disk[520..524].copy_from_slice(&0x0001_0000u32.to_le_bytes()); // revision
+        disk[524..528].copy_from_slice(&92u32.to_le_bytes()); // headerSize
+        disk[528..532].copy_from_slice(&0u32.to_le_bytes()); // crc32 (zero = skip check)
+        disk[536..544].copy_from_slice(&1u64.to_le_bytes()); // myLBA
+        disk[544..552].copy_from_slice(&3u64.to_le_bytes()); // alternateLBA
+        disk[552..560].copy_from_slice(&34u64.to_le_bytes()); // firstUsableLBA
+        disk[560..568].copy_from_slice(&100u64.to_le_bytes()); // lastUsableLBA
+        // diskGUID at offset 56 (sector 1 + 56 = byte 568)
+        let guid = Uuid::parse_str("A1B2C3D4-E5F6-7890-ABCD-EF1234567890").unwrap();
+        let guid_bytes = guid.to_bytes_le();
+        disk[568..584].copy_from_slice(&guid_bytes);
+        disk[584..592].copy_from_slice(&2u64.to_le_bytes()); // partitionEntryLBA
+        disk[592..596].copy_from_slice(&4u32.to_le_bytes()); // numPartitionEntries (only 1 sector worth fits in 4-sector disk)
+        disk[596..600].copy_from_slice(&128u32.to_le_bytes()); // partitionEntrySize
+
+        let hfs_guid = uuid::Uuid::from_bytes([
+            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA,
+            0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC,
+        ]);
+
+        // Sector 2: first partition entry
+        let entry_off = 1024;
+        let hfs_guid_bytes = hfs_guid.to_bytes_le();
+        disk[entry_off..entry_off + 16].copy_from_slice(&hfs_guid_bytes); // partition type GUID
+        disk[entry_off + 16..entry_off + 32].copy_from_slice(&uuid::Uuid::nil().to_bytes_le()); // unique GUID
+        disk[entry_off + 32..entry_off + 40].copy_from_slice(&40u64.to_le_bytes()); // startLBA
+        disk[entry_off + 40..entry_off + 48].copy_from_slice(&100u64.to_le_bytes()); // endLBA
+        // name at offset 56
+        let name = "TestHFS";
+        let name_utf16: Vec<u16> = name.encode_utf16().collect();
+        for (i, &c) in name_utf16.iter().take(36).enumerate() {
+            let off = entry_off + 56 + i * 2;
+            disk[off..off + 2].copy_from_slice(&c.to_le_bytes());
+        }
+
+        let device = make_memfile(disk.to_vec());
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Gpt { header, entries } => {
+                assert_eq!(header.revision, 0x0001_0000);
+                assert_eq!(header.my_lba, 1);
+                assert_eq!(entries.len(), 1);
+                assert!(is_hfs_gpt(&entries[0].partition_type_guid));
+                assert_eq!(entries[0].start_lba, 40);
+                assert_eq!(entries[0].end_lba, 100);
+                assert_eq!(entries[0].name, "TestHFS");
+            }
+            _ => panic!("Expected GPT"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mbr_entries_empty() {
+        let disk = vec![0u8; 512];
+        let parts = parse_mbr_entries(&disk);
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn test_detect_table_bad_signature() {
+        let mut disk = vec![0u8; 512];
+        disk[0x1FE] = 0x55;
+        disk[0x1FF] = 0xAA;
+        disk[0x1BE + 4] = 0xAF;
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap();
+        assert!(table.is_some());
+    }
+
+    #[test]
+    fn test_too_short_sector() {
+        let disk = vec![0u8; 10];
+        let device = MemFile::new(disk, 512);
+        assert!(detect_partition_table(&device, 0).unwrap().is_none());
+    }
 }

@@ -155,6 +155,7 @@ src/
 ├── blockio/
 │   ├── mod.rs           # BlockDevice trait
 │   ├── physical.rs      # PhysicalDrive (Win32 FFI: CreateFile, ReadFile, etc.)
+│   ├── filedevice.rs    # FileDevice (raw disk image as block device)
 │   └── memfile.rs       # In-memory block device for testing
 ├── hfs/
 │   ├── mod.rs           # HfsVolume struct (open, read, list, resolve path)
@@ -240,7 +241,6 @@ The synthetic test image (`test_hfs.img`, 128 KB, MBR + HFS+) now works end-to-e
 1. Write unit tests for parsing functions
 2. Test the tool against a real HFS+ USB disk on Windows 11
 3. Consider resource fork extraction
-4. Clean up `src/bin/img_debug.rs` (debug utility no longer needed)
 
 ## Out of Scope
 

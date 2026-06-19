@@ -274,9 +274,10 @@ impl HfsVolume {
         }
     }
 
-    pub fn extract_file(&self, src: &str, dst: &std::path::Path) -> anyhow::Result<()> {
+    pub fn extract_file(&self, src: &str, dst: &std::path::Path) -> anyhow::Result<u64> {
         let data = self.read_file(src)?;
+        let len = data.len() as u64;
         std::fs::write(dst, &data)?;
-        Ok(())
+        Ok(len)
     }
 }

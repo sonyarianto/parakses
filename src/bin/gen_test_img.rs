@@ -17,11 +17,6 @@ fn alloc_block_byte(alloc_block: u32) -> usize {
     (PART_BYTE + u64::from(alloc_block) * u64::from(BLOCK_SIZE)) as usize
 }
 
-/// Convert an allocation block number to an absolute LBA (sector index).
-fn alloc_block_lba(alloc_block: u32) -> u64 {
-    (PART_BYTE + u64::from(alloc_block) * u64::from(BLOCK_SIZE)) / 512
-}
-
 fn write_extent(disk: &mut [u8], off: usize, start: u32, count: u32) {
     disk[off..off+4].copy_from_slice(&be32(start));
     disk[off+4..off+8].copy_from_slice(&be32(count));
@@ -180,10 +175,10 @@ fn main() -> anyhow::Result<()> {
     println!("  Partition: LBA {}, Type: Apple HFS+ (0xAF)", PART_SECTOR);
     println!();
     println!("Usage:");
-    println!("  parakses --image {} volumes", out_path.display());
-    println!("  parakses --image {} list 0 /", out_path.display());
-    println!("  parakses --image {} cat 0 /hello.txt", out_path.display());
-    println!("  parakses --image {} extract 0 /hello.txt out.txt", out_path.display());
+    println!("  cargo run --bin parakses -- --image {} volumes", out_path.display());
+    println!("  cargo run --bin parakses -- --image {} list 0 /", out_path.display());
+    println!("  cargo run --bin parakses -- --image {} cat 0 /hello.txt", out_path.display());
+    println!("  cargo run --bin parakses -- --image {} extract 0 /hello.txt out.txt", out_path.display());
 
     Ok(())
 }

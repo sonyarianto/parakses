@@ -2,6 +2,7 @@
 name = "parakses"
 version = "0.1.0"
 edition = "2024"
+default-run = "parakses"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
