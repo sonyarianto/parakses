@@ -130,7 +130,10 @@ impl HfsVolume {
         self.header.volume_name()
     }
 
-    fn fork_reader_from_extent(&self, extent: volume_header::HfsPlusExtentDescriptor) -> ForkReader<'_> {
+    fn fork_reader_from_extent(
+        &self,
+        extent: volume_header::HfsPlusExtentDescriptor,
+    ) -> ForkReader<'_> {
         let fork_size = u64::from(extent.block_count) * u64::from(self.header.block_size);
         let mut reader = ForkReader::new(
             self.device.as_ref(),
@@ -255,10 +258,10 @@ impl HfsVolume {
         let data = reader.read_all()?;
 
         if file_record.is_compressed() && compression::is_hfs_compressed(&data) {
-            log::info!("Decompressing 'cmpf' file (type={})", {
-                let t = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-                t
-            });
+            log::info!(
+                "Decompressing 'cmpf' file (type={})",
+                u32::from_le_bytes([data[4], data[5], data[6], data[7]])
+            );
             compression::decompress_cmpf(&data)
         } else {
             Ok(data)

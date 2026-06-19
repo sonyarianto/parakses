@@ -2,7 +2,7 @@ pub mod key;
 pub mod node;
 
 use crate::hfs::fork::ForkReader;
-use node::{read_record, HeaderRecord, NodeDescriptor, NodeType};
+use node::{HeaderRecord, NodeDescriptor, NodeType, read_record};
 
 pub struct BTreeRecord {
     pub key: Vec<u8>,
@@ -17,7 +17,7 @@ pub struct BTreeReader<'a> {
 
 impl<'a> BTreeReader<'a> {
     pub fn open(fork: &'a ForkReader<'a>) -> anyhow::Result<Self> {
-        let node0 = fork.read_range(0, u64::from(fork.fork_size().min(4096)))?;
+        let node0 = fork.read_range(0, fork.fork_size().min(4096))?;
 
         if node0.is_empty() {
             anyhow::bail!("B-tree node 0 is empty (corrupt fork)");
@@ -32,7 +32,10 @@ impl<'a> BTreeReader<'a> {
         let node_size = header.node_size;
 
         if header.root_node == 0 && header.tree_depth > 0 {
-            anyhow::bail!("B-tree header has root_node=0 but tree_depth={}", header.tree_depth);
+            anyhow::bail!(
+                "B-tree header has root_node=0 but tree_depth={}",
+                header.tree_depth
+            );
         }
 
         Ok(Self {
@@ -56,8 +59,7 @@ impl<'a> BTreeReader<'a> {
 
     fn read_node_at(&self, index: u32) -> anyhow::Result<Vec<u8>> {
         let offset = u64::from(index) * u64::from(self.node_size);
-        self.fork
-            .read_range(offset, u64::from(self.node_size))
+        self.fork.read_range(offset, u64::from(self.node_size))
     }
 
     fn read_node_descriptor(&self, index: u32) -> anyhow::Result<NodeDescriptor> {
@@ -140,11 +142,7 @@ impl<'a> BTreeReader<'a> {
         self.search_node(self.header.root_node, needle)
     }
 
-    fn search_node(
-        &self,
-        node_index: u32,
-        needle: &[u8],
-    ) -> anyhow::Result<Option<BTreeRecord>> {
+    fn search_node(&self, node_index: u32, needle: &[u8]) -> anyhow::Result<Option<BTreeRecord>> {
         if node_index == 0 {
             return Ok(None);
         }

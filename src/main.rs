@@ -2,18 +2,19 @@ use parakses::blockio;
 use parakses::hfs;
 use parakses::volume;
 
-use parakses::blockio::BlockDevice;
 use clap::Parser;
+use parakses::blockio::BlockDevice;
 use parakses::cli::{Cli, Commands};
-use std::io::Write;
 use parakses::volume::VolumeDiscovery;
+use std::io::Write;
 
 fn open_volume(cli: &Cli, volume_index: u32) -> anyhow::Result<hfs::HfsVolume> {
     if let Some(img_path) = &cli.image {
         let path = std::path::Path::new(img_path);
         let drive: Box<dyn BlockDevice> = Box::new(blockio::filedevice::FileDevice::open(path)?);
         let vols = volume::windows::WindowsVolumeEnumerator::enumerate_from(drive.as_ref())?;
-        let hp = vols.first()
+        let hp = vols
+            .first()
             .and_then(|v| v.hfs_partitions.get(cli.partition as usize))
             .ok_or_else(|| anyhow::anyhow!("No HFS+ partition {} in image", cli.partition))?;
         let sector_size = drive.sector_size();
@@ -21,11 +22,15 @@ fn open_volume(cli: &Cli, volume_index: u32) -> anyhow::Result<hfs::HfsVolume> {
         hfs::HfsVolume::open(drive, volume_offset)
     } else {
         let vols = volume::windows::WindowsVolumeEnumerator::enumerate()?;
-        let vi = vols.get(volume_index as usize)
+        let vi = vols
+            .get(volume_index as usize)
             .ok_or_else(|| anyhow::anyhow!("Volume index {} not found", volume_index))?;
-        let hp = vi.hfs_partitions.first()
+        let hp = vi
+            .hfs_partitions
+            .first()
             .ok_or_else(|| anyhow::anyhow!("No HFS+ partitions on this drive"))?;
-        let drive: Box<dyn BlockDevice> = Box::new(blockio::physical::PhysicalDrive::open(vi.drive_index)?);
+        let drive: Box<dyn BlockDevice> =
+            Box::new(blockio::physical::PhysicalDrive::open(vi.drive_index)?);
         let sector_size = drive.sector_size();
         let volume_offset = hp.start_lba * u64::from(sector_size);
         hfs::HfsVolume::open(drive, volume_offset)
@@ -37,7 +42,10 @@ fn print_volume_info(hfs: &hfs::HfsVolume) -> anyhow::Result<()> {
     println!("Volume: {}", info.volume_name);
     println!("  Signature:  {:#06x}", info.signature);
     println!("  Version:    {}", info.version);
-    println!("  Type:       {}", if info.is_hfsx { "HFSX" } else { "HFS+" });
+    println!(
+        "  Type:       {}",
+        if info.is_hfsx { "HFSX" } else { "HFS+" }
+    );
     println!("  Block size: {} bytes", info.block_size);
     println!(
         "  Capacity:   {} blocks ({} MB)",
@@ -53,8 +61,13 @@ fn print_volume_info(hfs: &hfs::HfsVolume) -> anyhow::Result<()> {
     println!("  Folders:    {}", info.folder_count);
     println!("  Write count: {}", info.write_count);
     if info.is_journaled {
-        println!("  Journal:    present{}",
-            if info.journal_dirty { " (dirty, may be inconsistent)" } else { " (clean)" }
+        println!(
+            "  Journal:    present{}",
+            if info.journal_dirty {
+                " (dirty, may be inconsistent)"
+            } else {
+                " (clean)"
+            }
         );
     }
     Ok(())

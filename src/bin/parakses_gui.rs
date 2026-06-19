@@ -6,12 +6,12 @@ use std::mem;
 use std::path::Path;
 use std::ptr;
 
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::*;
-use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::UI::Controls::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::*;
+use windows::Win32::UI::Controls::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::core::{PCWSTR, w};
 
 use parakses::blockio::{self, BlockDevice};
 use parakses::hfs::{self, HfsVolume};
@@ -197,8 +197,8 @@ fn open_hfs(state: &GuiState, vol_idx: usize) -> Result<HfsVolume, String> {
 
     if let Some(img) = &state.image_path {
         let path = Path::new(img);
-        let drive =
-            blockio::filedevice::FileDevice::open(path).map_err(|e| format!("Failed to open image: {}", e))?;
+        let drive = blockio::filedevice::FileDevice::open(path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
         let sector_size = drive.sector_size();
         let volume_offset = part.start_lba * u64::from(sector_size);
         HfsVolume::open(Box::new(drive), volume_offset)
@@ -256,11 +256,21 @@ fn populate_list(state: &GuiState) {
             item.iItem = row;
             let mut w = to_wide("..");
             item.pszText = w.as_mut_ptr();
-            let _ = SendMessageW(hwnd_list, LVM_INSERTITEMW, WPARAM(0), LPARAM(&item as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_INSERTITEMW,
+                WPARAM(0),
+                LPARAM(&item as *const _ as isize),
+            );
             item.iSubItem = 2;
             let mut w_type = to_wide("Directory");
             item.pszText = w_type.as_mut_ptr();
-            let _ = SendMessageW(hwnd_list, LVM_SETITEMTEXTW, WPARAM(row as usize), LPARAM(&item as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_SETITEMTEXTW,
+                WPARAM(row as usize),
+                LPARAM(&item as *const _ as isize),
+            );
         }
         row += 1;
     }
@@ -273,7 +283,12 @@ fn populate_list(state: &GuiState) {
             item.iSubItem = 0;
             let mut w = to_wide(&entry.name);
             item.pszText = w.as_mut_ptr();
-            let _ = SendMessageW(hwnd_list, LVM_INSERTITEMW, WPARAM(0), LPARAM(&item as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_INSERTITEMW,
+                WPARAM(0),
+                LPARAM(&item as *const _ as isize),
+            );
 
             item.iSubItem = 1;
             let size_str = if entry.is_directory {
@@ -283,13 +298,27 @@ fn populate_list(state: &GuiState) {
             };
             let mut w_size = to_wide(&size_str);
             item.pszText = w_size.as_mut_ptr();
-            let _ = SendMessageW(hwnd_list, LVM_SETITEMTEXTW, WPARAM(row as usize), LPARAM(&item as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_SETITEMTEXTW,
+                WPARAM(row as usize),
+                LPARAM(&item as *const _ as isize),
+            );
 
             item.iSubItem = 2;
-            let kind = if entry.is_directory { "Directory" } else { "File" };
+            let kind = if entry.is_directory {
+                "Directory"
+            } else {
+                "File"
+            };
             let mut w_kind = to_wide(kind);
             item.pszText = w_kind.as_mut_ptr();
-            let _ = SendMessageW(hwnd_list, LVM_SETITEMTEXTW, WPARAM(row as usize), LPARAM(&item as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_SETITEMTEXTW,
+                WPARAM(row as usize),
+                LPARAM(&item as *const _ as isize),
+            );
         }
         row += 1;
     }
@@ -393,7 +422,12 @@ fn load_volumes(state: &mut GuiState) {
         for (i, entry) in items.iter().enumerate() {
             let w = to_wide(&entry.display);
             let idx = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(w.as_ptr() as isize));
-            let _ = SendMessageW(combo, CB_SETITEMDATA, WPARAM(idx.0 as usize), LPARAM(i as isize));
+            let _ = SendMessageW(
+                combo,
+                CB_SETITEMDATA,
+                WPARAM(idx.0 as usize),
+                LPARAM(i as isize),
+            );
         }
     }
 
@@ -438,7 +472,12 @@ fn on_go_up(state: &mut GuiState) {
 
 fn get_selected_item_name(hwnd_list: HWND) -> Option<String> {
     unsafe {
-        let sel = SendMessageW(hwnd_list, LVM_GETNEXTITEM, WPARAM((-1i32) as usize), LPARAM(LVNI_SELECTED as isize));
+        let sel = SendMessageW(
+            hwnd_list,
+            LVM_GETNEXTITEM,
+            WPARAM((-1i32) as usize),
+            LPARAM(LVNI_SELECTED as isize),
+        );
         if sel.0 == -1 {
             return None;
         }
@@ -448,7 +487,12 @@ fn get_selected_item_name(hwnd_list: HWND) -> Option<String> {
         item.pszText = buf.as_mut_ptr();
         item.cchTextMax = buf.len() as i32;
         item.mask = LVIF_TEXT;
-        let _ = SendMessageW(hwnd_list, LVM_GETITEMTEXTW, WPARAM(sel.0 as usize), LPARAM(&item as *const _ as isize));
+        let _ = SendMessageW(
+            hwnd_list,
+            LVM_GETITEMTEXTW,
+            WPARAM(sel.0 as usize),
+            LPARAM(&item as *const _ as isize),
+        );
         let name = from_wide_lossy(&buf);
         Some(name)
     }
@@ -494,7 +538,12 @@ fn on_list_double_click(state: &mut GuiState) {
 
     let offset = if state.current_path != "/" { 1 } else { 0 };
     unsafe {
-        let sel = SendMessageW(hwnd_list, LVM_GETNEXTITEM, WPARAM((-1i32) as usize), LPARAM(LVNI_SELECTED as isize));
+        let sel = SendMessageW(
+            hwnd_list,
+            LVM_GETNEXTITEM,
+            WPARAM((-1i32) as usize),
+            LPARAM(LVNI_SELECTED as isize),
+        );
         let idx = (sel.0 - offset as isize) as usize;
         if idx < entries.len() && entries[idx].is_directory {
             state.current_path = if state.current_path == "/" {
@@ -558,7 +607,12 @@ fn on_extract(state: &mut GuiState) {
 
     let offset = if state.current_path != "/" { 1 } else { 0 };
     unsafe {
-        let sel = SendMessageW(hwnd_list, LVM_GETNEXTITEM, WPARAM((-1i32) as usize), LPARAM(LVNI_SELECTED as isize));
+        let sel = SendMessageW(
+            hwnd_list,
+            LVM_GETNEXTITEM,
+            WPARAM((-1i32) as usize),
+            LPARAM(LVNI_SELECTED as isize),
+        );
         let idx = (sel.0 - offset as isize) as usize;
         if idx >= entries.len() {
             return;
@@ -708,16 +762,56 @@ unsafe extern "system" fn wnd_proc(
             let btn_up_w = 50i32;
             let btn_extract_w = 70i32;
             let btn_gap = 4i32;
-            let _ = SetWindowPos(state.hwnd_combo, HWND(ptr::null_mut()), pad, pad, combo_w, 200, SET_WINDOW_POS_FLAGS(0x0004));
+            let _ = SetWindowPos(
+                state.hwnd_combo,
+                HWND(ptr::null_mut()),
+                pad,
+                pad,
+                combo_w,
+                200,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
             let path_x = pad + combo_w + pad;
             let buttons_w = btn_up_w + btn_gap + btn_extract_w + pad;
             let path_w = (w - path_x - pad - buttons_w).max(50);
             let btn_x = path_x + path_w + pad;
-            let _ = SetWindowPos(state.hwnd_path, HWND(ptr::null_mut()), path_x, pad, path_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
-            let _ = SetWindowPos(state.hwnd_up, HWND(ptr::null_mut()), btn_x, pad, btn_up_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
-            let _ = SetWindowPos(state.hwnd_extract, HWND(ptr::null_mut()), btn_x + btn_up_w + btn_gap, pad, btn_extract_w, cy, SET_WINDOW_POS_FLAGS(0x0004));
+            let _ = SetWindowPos(
+                state.hwnd_path,
+                HWND(ptr::null_mut()),
+                path_x,
+                pad,
+                path_w,
+                cy,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
+            let _ = SetWindowPos(
+                state.hwnd_up,
+                HWND(ptr::null_mut()),
+                btn_x,
+                pad,
+                btn_up_w,
+                cy,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
+            let _ = SetWindowPos(
+                state.hwnd_extract,
+                HWND(ptr::null_mut()),
+                btn_x + btn_up_w + btn_gap,
+                pad,
+                btn_extract_w,
+                cy,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
             let list_top = cy + pad * 2;
-            let _ = SetWindowPos(state.hwnd_list, HWND(ptr::null_mut()), pad, list_top, w - pad * 2, h - list_top - pad - 20, SET_WINDOW_POS_FLAGS(0x0004));
+            let _ = SetWindowPos(
+                state.hwnd_list,
+                HWND(ptr::null_mut()),
+                pad,
+                list_top,
+                w - pad * 2,
+                h - list_top - pad - 20,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
             let _ = SendMessageW(state.hwnd_status, SB_SETTEXT, WPARAM(0), LPARAM(0));
             LRESULT(0)
         }
@@ -729,7 +823,9 @@ unsafe extern "system" fn wnd_proc(
                 IDC_EXTRACT if code == BN_CLICKED => on_extract(state),
                 IDC_VOLUME_COMBO if code == CBN_SELCHANGE => on_volume_selected(state),
                 IDM_OPEN_IMAGE => on_open_image(state),
-                IDM_EXIT => { let _ = DestroyWindow(hwnd); }
+                IDM_EXIT => {
+                    let _ = DestroyWindow(hwnd);
+                }
                 IDM_ABOUT => show_about(hwnd),
                 _ => {}
             }
@@ -754,62 +850,89 @@ fn create_gui(hwnd: HWND) -> GuiState {
             w!("ComboBox"),
             w!(""),
             WINDOW_STYLE(CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP),
-            10, 4, 280, 200,
+            10,
+            4,
+            280,
+            200,
             hwnd,
             HMENU(IDC_VOLUME_COMBO as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let hwnd_path = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_CLIENTEDGE),
             w!("Edit"),
             w!("/"),
             WINDOW_STYLE(WS_CHILD | WS_VISIBLE | ES_READONLY),
-            300, 4, 200, 26,
+            300,
+            4,
+            200,
+            26,
             hwnd,
             HMENU(IDC_PATH_TEXT as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let hwnd_up = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_WINDOWEDGE),
             w!("Button"),
             w!("Up"),
             WINDOW_STYLE(WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP),
-            510, 4, 50, 26,
+            510,
+            4,
+            50,
+            26,
             hwnd,
             HMENU(IDC_GO_UP as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let hwnd_extract = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_WINDOWEDGE),
             w!("Button"),
             w!("Extract"),
             WINDOW_STYLE(WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP),
-            570, 4, 70, 26,
+            570,
+            4,
+            70,
+            26,
             hwnd,
             HMENU(IDC_EXTRACT as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let hwnd_list = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_CLIENTEDGE),
             w!("SysListView32"),
             w!(""),
-            WINDOW_STYLE(WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP),
-            10, 34, 780, 450,
+            WINDOW_STYLE(
+                WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP,
+            ),
+            10,
+            34,
+            780,
+            450,
             hwnd,
             HMENU(IDC_FILE_LIST as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let _ = SendMessageW(hwnd_list, LVM_SETEXTENDEDLISTVIEWSTYLE, WPARAM(0), LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES) as isize));
+        let _ = SendMessageW(
+            hwnd_list,
+            LVM_SETEXTENDEDLISTVIEWSTYLE,
+            WPARAM(0),
+            LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES) as isize),
+        );
 
         let headers = ["Name", "Size", "Type"];
         let widths = [360, 100, 100];
@@ -825,7 +948,12 @@ fn create_gui(hwnd: HWND) -> GuiState {
                 iImage: 0,
                 iOrder: 0,
             };
-            let _ = SendMessageW(hwnd_list, LVM_INSERTCOLUMNW, WPARAM(i), LPARAM(&lvc as *const _ as isize));
+            let _ = SendMessageW(
+                hwnd_list,
+                LVM_INSERTCOLUMNW,
+                WPARAM(i),
+                LPARAM(&lvc as *const _ as isize),
+            );
         }
 
         let hwnd_status = CreateWindowExW(
@@ -833,23 +961,47 @@ fn create_gui(hwnd: HWND) -> GuiState {
             w!("msctls_statusbar32"),
             w!("Ready"),
             WINDOW_STYLE(WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP),
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
             hwnd,
             HMENU(IDC_STATUS_BAR as *mut _),
             hinst,
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let hmenu = CreateMenu().unwrap();
         let hsub = CreatePopupMenu().unwrap();
-        let _ = AppendMenuW(hsub, MENU_ITEM_FLAGS(0), IDM_OPEN_IMAGE as usize, w!("Open Image..."));
+        let _ = AppendMenuW(
+            hsub,
+            MENU_ITEM_FLAGS(0),
+            IDM_OPEN_IMAGE as usize,
+            w!("Open Image..."),
+        );
         let _ = AppendMenuW(hsub, MENU_ITEM_FLAGS(0x0800), 0, PCWSTR(ptr::null()));
         let _ = AppendMenuW(hsub, MENU_ITEM_FLAGS(0), IDM_EXIT as usize, w!("Exit"));
-        let _ = AppendMenuW(hmenu, MENU_ITEM_FLAGS(0x0010), hsub.0 as u32 as usize, w!("File"));
+        let _ = AppendMenuW(
+            hmenu,
+            MENU_ITEM_FLAGS(0x0010),
+            hsub.0 as u32 as usize,
+            w!("File"),
+        );
 
         let habout = CreatePopupMenu().unwrap();
-        let _ = AppendMenuW(habout, MENU_ITEM_FLAGS(0), IDM_ABOUT as usize, w!("About parakses"));
-        let _ = AppendMenuW(hmenu, MENU_ITEM_FLAGS(0x0010), habout.0 as u32 as usize, w!("Help"));
+        let _ = AppendMenuW(
+            habout,
+            MENU_ITEM_FLAGS(0),
+            IDM_ABOUT as usize,
+            w!("About parakses"),
+        );
+        let _ = AppendMenuW(
+            hmenu,
+            MENU_ITEM_FLAGS(0x0010),
+            habout.0 as u32 as usize,
+            w!("Help"),
+        );
 
         let _ = SetMenu(hwnd, hmenu);
 

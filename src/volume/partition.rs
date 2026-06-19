@@ -47,8 +47,8 @@ pub fn is_hfs_mbr(part_type: u8) -> bool {
 
 pub fn is_hfs_gpt(guid: &uuid::Uuid) -> bool {
     let apple_hfs = uuid::Uuid::from_bytes([
-        0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA,
-        0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC,
+        0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA, 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC,
+        0xAC,
     ]);
     *guid == apple_hfs
 }
@@ -69,9 +69,7 @@ pub fn detect_partition_table(
 
     let mbr_partitions = parse_mbr_entries(&sector);
 
-    let protective_mbr = mbr_partitions
-        .iter()
-        .any(|p| p.partition_type == 0xEE);
+    let protective_mbr = mbr_partitions.iter().any(|p| p.partition_type == 0xEE);
 
     if protective_mbr {
         match parse_gpt(device, offset) {
@@ -82,7 +80,10 @@ pub fn detect_partition_table(
                 }));
             }
             Err(e) => {
-                log::warn!("GPT header present but parse failed: {}; falling back to MBR", e);
+                log::warn!(
+                    "GPT header present but parse failed: {}; falling back to MBR",
+                    e
+                );
             }
         }
     }
@@ -157,35 +158,33 @@ fn parse_gpt(device: &dyn BlockDevice, offset: u64) -> io::Result<(GptHeader, Ve
         }
     }
     let my_lba = u64::from_le_bytes([
-        sector[24], sector[25], sector[26], sector[27],
-        sector[28], sector[29], sector[30], sector[31],
+        sector[24], sector[25], sector[26], sector[27], sector[28], sector[29], sector[30],
+        sector[31],
     ]);
     let alternate_lba = u64::from_le_bytes([
-        sector[32], sector[33], sector[34], sector[35],
-        sector[36], sector[37], sector[38], sector[39],
+        sector[32], sector[33], sector[34], sector[35], sector[36], sector[37], sector[38],
+        sector[39],
     ]);
     let first_usable_lba = u64::from_le_bytes([
-        sector[40], sector[41], sector[42], sector[43],
-        sector[44], sector[45], sector[46], sector[47],
+        sector[40], sector[41], sector[42], sector[43], sector[44], sector[45], sector[46],
+        sector[47],
     ]);
     let last_usable_lba = u64::from_le_bytes([
-        sector[48], sector[49], sector[50], sector[51],
-        sector[52], sector[53], sector[54], sector[55],
+        sector[48], sector[49], sector[50], sector[51], sector[52], sector[53], sector[54],
+        sector[55],
     ]);
     let disk_guid = uuid::Uuid::from_bytes_le([
-        sector[56], sector[57], sector[58], sector[59],
-        sector[60], sector[61], sector[62], sector[63],
-        sector[64], sector[65], sector[66], sector[67],
-        sector[68], sector[69], sector[70], sector[71],
+        sector[56], sector[57], sector[58], sector[59], sector[60], sector[61], sector[62],
+        sector[63], sector[64], sector[65], sector[66], sector[67], sector[68], sector[69],
+        sector[70], sector[71],
     ]);
     let partition_entry_lba = u64::from_le_bytes([
-        sector[72], sector[73], sector[74], sector[75],
-        sector[76], sector[77], sector[78], sector[79],
+        sector[72], sector[73], sector[74], sector[75], sector[76], sector[77], sector[78],
+        sector[79],
     ]);
     let num_partition_entries =
         u32::from_le_bytes([sector[80], sector[81], sector[82], sector[83]]);
-    let partition_entry_size =
-        u32::from_le_bytes([sector[84], sector[85], sector[86], sector[87]]);
+    let partition_entry_size = u32::from_le_bytes([sector[84], sector[85], sector[86], sector[87]]);
 
     let header = GptHeader {
         revision,
@@ -239,10 +238,22 @@ fn read_gpt_entries(
         let entry_data = &sector_data[entry_offset_in_sector..entry_offset_in_sector + entry_size];
 
         let type_guid = uuid::Uuid::from_bytes_le([
-            entry_data[0], entry_data[1], entry_data[2], entry_data[3],
-            entry_data[4], entry_data[5], entry_data[6], entry_data[7],
-            entry_data[8], entry_data[9], entry_data[10], entry_data[11],
-            entry_data[12], entry_data[13], entry_data[14], entry_data[15],
+            entry_data[0],
+            entry_data[1],
+            entry_data[2],
+            entry_data[3],
+            entry_data[4],
+            entry_data[5],
+            entry_data[6],
+            entry_data[7],
+            entry_data[8],
+            entry_data[9],
+            entry_data[10],
+            entry_data[11],
+            entry_data[12],
+            entry_data[13],
+            entry_data[14],
+            entry_data[15],
         ]);
 
         if type_guid.is_nil() {
@@ -250,23 +261,53 @@ fn read_gpt_entries(
         }
 
         let unique_guid = uuid::Uuid::from_bytes_le([
-            entry_data[16], entry_data[17], entry_data[18], entry_data[19],
-            entry_data[20], entry_data[21], entry_data[22], entry_data[23],
-            entry_data[24], entry_data[25], entry_data[26], entry_data[27],
-            entry_data[28], entry_data[29], entry_data[30], entry_data[31],
+            entry_data[16],
+            entry_data[17],
+            entry_data[18],
+            entry_data[19],
+            entry_data[20],
+            entry_data[21],
+            entry_data[22],
+            entry_data[23],
+            entry_data[24],
+            entry_data[25],
+            entry_data[26],
+            entry_data[27],
+            entry_data[28],
+            entry_data[29],
+            entry_data[30],
+            entry_data[31],
         ]);
 
         let start_lba = u64::from_le_bytes([
-            entry_data[32], entry_data[33], entry_data[34], entry_data[35],
-            entry_data[36], entry_data[37], entry_data[38], entry_data[39],
+            entry_data[32],
+            entry_data[33],
+            entry_data[34],
+            entry_data[35],
+            entry_data[36],
+            entry_data[37],
+            entry_data[38],
+            entry_data[39],
         ]);
         let end_lba = u64::from_le_bytes([
-            entry_data[40], entry_data[41], entry_data[42], entry_data[43],
-            entry_data[44], entry_data[45], entry_data[46], entry_data[47],
+            entry_data[40],
+            entry_data[41],
+            entry_data[42],
+            entry_data[43],
+            entry_data[44],
+            entry_data[45],
+            entry_data[46],
+            entry_data[47],
         ]);
         let attributes = u64::from_le_bytes([
-            entry_data[48], entry_data[49], entry_data[50], entry_data[51],
-            entry_data[52], entry_data[53], entry_data[54], entry_data[55],
+            entry_data[48],
+            entry_data[49],
+            entry_data[50],
+            entry_data[51],
+            entry_data[52],
+            entry_data[53],
+            entry_data[54],
+            entry_data[55],
         ]);
 
         let name_utf16: Vec<u16> = entry_data[56..128]
@@ -364,8 +405,8 @@ mod tests {
     #[test]
     fn test_is_hfs_gpt() {
         let hfs_guid = uuid::Uuid::from_bytes([
-            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA,
-            0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC,
+            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA, 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43,
+            0xEC, 0xAC,
         ]);
         assert!(is_hfs_gpt(&hfs_guid));
 
@@ -373,8 +414,8 @@ mod tests {
         assert!(!is_hfs_gpt(&other));
 
         let ntfs = uuid::Uuid::from_bytes([
-            0xEB, 0xD0, 0xA0, 0xA2, 0xB9, 0xE5, 0x44, 0x33,
-            0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
+            0xEB, 0xD0, 0xA0, 0xA2, 0xB9, 0xE5, 0x44, 0x33, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26,
+            0x99, 0xC7,
         ]);
         assert!(!is_hfs_gpt(&ntfs));
     }
@@ -420,8 +461,8 @@ mod tests {
         disk[596..600].copy_from_slice(&128u32.to_le_bytes()); // partitionEntrySize
 
         let hfs_guid = uuid::Uuid::from_bytes([
-            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA,
-            0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC,
+            0x48, 0x46, 0x53, 0x00, 0x00, 0x00, 0x11, 0xAA, 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43,
+            0xEC, 0xAC,
         ]);
 
         // Sector 2: first partition entry

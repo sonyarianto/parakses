@@ -138,9 +138,9 @@ pub fn parse_catalog_record(value: &[u8]) -> anyhow::Result<CatalogRecordData> {
                 node_name: name,
             }))
         }
-            _ => anyhow::bail!("Unknown catalog record type: {:#06x}", record_type),
-        }
+        _ => anyhow::bail!("Unknown catalog record type: {:#06x}", record_type),
     }
+}
 
 #[cfg(test)]
 mod tests {
@@ -148,27 +148,27 @@ mod tests {
 
     fn folder_record_bytes() -> Vec<u8> {
         let mut d = vec![0u8; 72];
-        d[0..2].copy_from_slice(&1u16.to_be_bytes());     // recordType = kHFSPlusFolderRecord
-        d[2..4].copy_from_slice(&0u16.to_be_bytes());     // flags
-        d[4..8].copy_from_slice(&3u32.to_be_bytes());     // valence = 3 children
-        d[8..12].copy_from_slice(&1u32.to_be_bytes());    // folderID = 1 (root)
-        d[64..68].copy_from_slice(&2u32.to_be_bytes());   // textEncoding
-        d[68..72].copy_from_slice(&1u32.to_be_bytes());   // folderCount
+        d[0..2].copy_from_slice(&1u16.to_be_bytes()); // recordType = kHFSPlusFolderRecord
+        d[2..4].copy_from_slice(&0u16.to_be_bytes()); // flags
+        d[4..8].copy_from_slice(&3u32.to_be_bytes()); // valence = 3 children
+        d[8..12].copy_from_slice(&1u32.to_be_bytes()); // folderID = 1 (root)
+        d[64..68].copy_from_slice(&2u32.to_be_bytes()); // textEncoding
+        d[68..72].copy_from_slice(&1u32.to_be_bytes()); // folderCount
         d
     }
 
     fn file_record_bytes() -> Vec<u8> {
         let mut d = vec![0u8; 232];
-        d[0..2].copy_from_slice(&2u16.to_be_bytes());     // recordType = kHFSPlusFileRecord
-        d[2..4].copy_from_slice(&1u16.to_be_bytes());     // flags (compressed)
-        d[8..12].copy_from_slice(&42u32.to_be_bytes());   // fileID
-        d[64..68].copy_from_slice(&0u32.to_be_bytes());   // textEncoding
+        d[0..2].copy_from_slice(&2u16.to_be_bytes()); // recordType = kHFSPlusFileRecord
+        d[2..4].copy_from_slice(&1u16.to_be_bytes()); // flags (compressed)
+        d[8..12].copy_from_slice(&42u32.to_be_bytes()); // fileID
+        d[64..68].copy_from_slice(&0u32.to_be_bytes()); // textEncoding
         // dataFork at offset 72
         d[72..80].copy_from_slice(&1024u64.to_be_bytes()); // logicalSize
-        d[84..88].copy_from_slice(&2u32.to_be_bytes());    // totalBlocks
+        d[84..88].copy_from_slice(&2u32.to_be_bytes()); // totalBlocks
         d[88..96].copy_from_slice(&[0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x02]); // extent
         // resourceFork at offset 152
-        d[152..160].copy_from_slice(&0u64.to_be_bytes());  // logicalSize = 0
+        d[152..160].copy_from_slice(&0u64.to_be_bytes()); // logicalSize = 0
         d
     }
 
@@ -177,7 +177,7 @@ mod tests {
         let name_utf16: Vec<u16> = name.encode_utf16().collect();
         let size = 6 + name_utf16.len() * 2;
         let mut d = vec![0u8; size];
-        d[0..2].copy_from_slice(&3u16.to_be_bytes());     // recordType = kHFSPlusFolderThread
+        d[0..2].copy_from_slice(&3u16.to_be_bytes()); // recordType = kHFSPlusFolderThread
         d[4..6].copy_from_slice(&(name_utf16.len() as u16).to_be_bytes());
         for (i, &c) in name_utf16.iter().enumerate() {
             d[6 + i * 2..8 + i * 2].copy_from_slice(&c.to_be_bytes());
@@ -273,17 +273,31 @@ mod tests {
     #[test]
     fn test_file_id() {
         let folder = CatalogRecordData::Folder(CatalogFolder {
-            record_type: 1, flags: 0, valence: 1, folder_id: 5,
-            create_date: 0, content_mod_date: 0, attribute_mod_date: 0,
-            access_date: 0, backup_date: 0, text_encoding: 0, folder_count: 0,
+            record_type: 1,
+            flags: 0,
+            valence: 1,
+            folder_id: 5,
+            create_date: 0,
+            content_mod_date: 0,
+            attribute_mod_date: 0,
+            access_date: 0,
+            backup_date: 0,
+            text_encoding: 0,
+            folder_count: 0,
         });
         assert_eq!(folder.file_id(), Some(5));
         assert!(folder.is_directory());
 
         let file = CatalogRecordData::File(CatalogFile {
-            record_type: 2, flags: 0, file_id: 99, create_date: 0,
-            content_mod_date: 0, attribute_mod_date: 0, access_date: 0,
-            backup_date: 0, text_encoding: 0,
+            record_type: 2,
+            flags: 0,
+            file_id: 99,
+            create_date: 0,
+            content_mod_date: 0,
+            attribute_mod_date: 0,
+            access_date: 0,
+            backup_date: 0,
+            text_encoding: 0,
             data_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
             resource_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
         });
@@ -291,7 +305,8 @@ mod tests {
         assert!(!file.is_directory());
 
         let thread = CatalogRecordData::Thread(CatalogThread {
-            record_type: 3, node_name: String::new(),
+            record_type: 3,
+            node_name: String::new(),
         });
         assert_eq!(thread.file_id(), None);
         assert!(!thread.is_directory());
@@ -307,8 +322,6 @@ mod tests {
             _ => panic!("Expected File"),
         }
     }
-
-
 }
 
 pub struct CatalogReader<'a> {
@@ -319,11 +332,17 @@ pub struct CatalogReader<'a> {
 impl<'a> CatalogReader<'a> {
     pub fn open(tree: BTreeReader<'a>) -> Self {
         let case_sensitive = !tree.is_case_insensitive();
-        Self { tree, case_sensitive }
+        Self {
+            tree,
+            case_sensitive,
+        }
     }
 
     pub fn with_case_sensitivity(tree: BTreeReader<'a>, case_sensitive: bool) -> Self {
-        Self { tree, case_sensitive }
+        Self {
+            tree,
+            case_sensitive,
+        }
     }
 
     fn all_records(&self) -> anyhow::Result<Vec<BTreeRecord>> {
@@ -387,9 +406,9 @@ impl<'a> CatalogReader<'a> {
             let matched = if self.case_sensitive {
                 node_name == name
             } else {
-                folded_name.as_ref().map_or(false, |f| {
-                    crate::hfs::unicode::case_fold(&node_name) == *f
-                })
+                folded_name
+                    .as_ref()
+                    .is_some_and(|f| crate::hfs::unicode::case_fold(&node_name) == *f)
             };
             if !matched {
                 continue;

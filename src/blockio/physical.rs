@@ -166,14 +166,8 @@ impl BlockDevice for PhysicalDrive {
         let mut buf = vec![0u8; self.sector_size as usize];
         let mut bytes_read: u32 = 0;
 
-        let result = unsafe {
-            SetFilePointerEx(
-                self.handle,
-                offset as i64,
-                ptr::null_mut(),
-                FILE_BEGIN,
-            )
-        };
+        let result =
+            unsafe { SetFilePointerEx(self.handle, offset as i64, ptr::null_mut(), FILE_BEGIN) };
         if result == 0 {
             return Err(io::Error::last_os_error());
         }

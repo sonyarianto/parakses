@@ -1,6 +1,6 @@
 use crate::hfs::btree::BTreeReader;
 use crate::hfs::volume_header::{
-    parse_extent_record, HfsPlusExtentDescriptor, HFS_PLUS_EXTENT_DESCRIPTOR_SIZE,
+    HFS_PLUS_EXTENT_DESCRIPTOR_SIZE, HfsPlusExtentDescriptor, parse_extent_record,
 };
 use crate::util::read_u32_be;
 
@@ -53,7 +53,12 @@ impl<'a> ExtentsOverflowReader<'a> {
                     continue;
                 }
                 if rec.value.len() < 8 * HFS_PLUS_EXTENT_DESCRIPTOR_SIZE {
-                    log::warn!("Short extent record for file {} fork {}: {} bytes", file_id, fork_type, rec.value.len());
+                    log::warn!(
+                        "Short extent record for file {} fork {}: {} bytes",
+                        file_id,
+                        fork_type,
+                        rec.value.len()
+                    );
                     continue;
                 }
                 let extents = parse_extent_record(&rec.value);

@@ -46,8 +46,7 @@ pub struct HfsPlusForkData {
 impl HfsPlusForkData {
     pub fn parse(data: &[u8]) -> Self {
         let logical_size = u64::from_be_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
         let clump_size = read_u32_be(&data[8..]);
         let total_blocks = read_u32_be(&data[12..]);
@@ -148,8 +147,7 @@ impl VolumeHeader {
             next_catalog_id: read_u32_be(&data[64..]),
             write_count: read_u32_be(&data[68..]),
             encodings_bitmap: u64::from_be_bytes([
-                data[72], data[73], data[74], data[75],
-                data[76], data[77], data[78], data[79],
+                data[72], data[73], data[74], data[75], data[76], data[77], data[78], data[79],
             ]),
             finder_info: [
                 read_u32_be(&data[80..]),

@@ -79,10 +79,7 @@ impl HeaderRecord {
             anyhow::bail!("B-tree node size too small: {} (minimum 512)", node_size);
         }
         if !node_size.is_power_of_two() {
-            anyhow::bail!(
-                "B-tree node size not power of two: {}",
-                node_size
-            );
+            anyhow::bail!("B-tree node size not power of two: {}", node_size);
         }
 
         Ok(Self {
@@ -122,7 +119,7 @@ pub fn record_offsets(node_data: &[u8], num_records: u16, node_size: u16) -> Vec
     offsets
 }
 
-pub fn read_record<'a>(node_data: &'a [u8], offset: usize, next_offset: usize) -> &'a [u8] {
+pub fn read_record(node_data: &[u8], offset: usize, next_offset: usize) -> &[u8] {
     let end = next_offset.min(node_data.len());
     &node_data[offset..end]
 }
@@ -134,10 +131,10 @@ mod tests {
     #[test]
     fn test_header_node_descriptor() {
         let mut data = vec![0u8; 14];
-        data[0..4].copy_from_slice(&0u32.to_be_bytes());   // fLink
-        data[4..8].copy_from_slice(&0u32.to_be_bytes());   // bLink
-        data[8] = 0;                                        // kind = header
-        data[9] = 0;                                        // height
+        data[0..4].copy_from_slice(&0u32.to_be_bytes()); // fLink
+        data[4..8].copy_from_slice(&0u32.to_be_bytes()); // bLink
+        data[8] = 0; // kind = header
+        data[9] = 0; // height
         data[10..12].copy_from_slice(&1u16.to_be_bytes()); // numRecords
         let desc = NodeDescriptor::parse(&data).unwrap();
         assert_eq!(desc.f_link, 0);
@@ -150,10 +147,10 @@ mod tests {
     #[test]
     fn test_leaf_node_descriptor() {
         let mut data = vec![0u8; 14];
-        data[0..4].copy_from_slice(&5u32.to_be_bytes());   // fLink
-        data[4..8].copy_from_slice(&3u32.to_be_bytes());   // bLink
-        data[8] = 2;                                        // kind = leaf
-        data[9] = 1;                                        // height
+        data[0..4].copy_from_slice(&5u32.to_be_bytes()); // fLink
+        data[4..8].copy_from_slice(&3u32.to_be_bytes()); // bLink
+        data[8] = 2; // kind = leaf
+        data[9] = 1; // height
         data[10..12].copy_from_slice(&2u16.to_be_bytes()); // numRecords
         let desc = NodeDescriptor::parse(&data).unwrap();
         assert_eq!(desc.f_link, 5);
@@ -198,18 +195,18 @@ mod tests {
     #[test]
     fn test_header_record_parse() {
         let mut data = vec![0u8; 106];
-        data[14..16].copy_from_slice(&1u16.to_be_bytes());       // treeDepth
-        data[16..20].copy_from_slice(&6u32.to_be_bytes());       // rootNode
-        data[20..24].copy_from_slice(&2u32.to_be_bytes());       // leafRecords
-        data[24..28].copy_from_slice(&6u32.to_be_bytes());       // firstLeafNode
-        data[28..32].copy_from_slice(&6u32.to_be_bytes());       // lastLeafNode
-        data[32..34].copy_from_slice(&512u16.to_be_bytes());     // nodeSize
-        data[34..36].copy_from_slice(&516u16.to_be_bytes());     // maxKeyLen
-        data[36..40].copy_from_slice(&2u32.to_be_bytes());       // totalNodes
-        data[40..44].copy_from_slice(&0u32.to_be_bytes());       // freeNodes
-        data[44..48].copy_from_slice(&8192u32.to_be_bytes());    // clumpSize
-        data[48] = 0x00;                                          // btreeType
-        data[49] = 0xCF;                                          // keyCompareType (case-insensitive)
+        data[14..16].copy_from_slice(&1u16.to_be_bytes()); // treeDepth
+        data[16..20].copy_from_slice(&6u32.to_be_bytes()); // rootNode
+        data[20..24].copy_from_slice(&2u32.to_be_bytes()); // leafRecords
+        data[24..28].copy_from_slice(&6u32.to_be_bytes()); // firstLeafNode
+        data[28..32].copy_from_slice(&6u32.to_be_bytes()); // lastLeafNode
+        data[32..34].copy_from_slice(&512u16.to_be_bytes()); // nodeSize
+        data[34..36].copy_from_slice(&516u16.to_be_bytes()); // maxKeyLen
+        data[36..40].copy_from_slice(&2u32.to_be_bytes()); // totalNodes
+        data[40..44].copy_from_slice(&0u32.to_be_bytes()); // freeNodes
+        data[44..48].copy_from_slice(&8192u32.to_be_bytes()); // clumpSize
+        data[48] = 0x00; // btreeType
+        data[49] = 0xCF; // keyCompareType (case-insensitive)
         data[50..54].copy_from_slice(&0x0000_0001u32.to_be_bytes()); // attributes
 
         let hr = HeaderRecord::parse(&data).unwrap();
@@ -263,8 +260,8 @@ mod tests {
         // Node with 2 records at offsets 14 and 94
         let mut node = vec![0u8; 512];
         let ot_start = 512 - 4; // 2 records * 2 bytes
-        node[ot_start..ot_start+2].copy_from_slice(&14u16.to_be_bytes());
-        node[ot_start+2..ot_start+4].copy_from_slice(&94u16.to_be_bytes());
+        node[ot_start..ot_start + 2].copy_from_slice(&14u16.to_be_bytes());
+        node[ot_start + 2..ot_start + 4].copy_from_slice(&94u16.to_be_bytes());
         let offsets = record_offsets(&node, 2, 512);
         assert_eq!(offsets, vec![14, 94]);
     }

@@ -13,8 +13,7 @@ pub fn read_u32_be(data: &[u8]) -> u32 {
 /// Read a big-endian u64 from a byte slice.
 pub fn read_u64_be(data: &[u8]) -> u64 {
     u64::from_be_bytes([
-        data[0], data[1], data[2], data[3],
-        data[4], data[5], data[6], data[7],
+        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ])
 }
 
@@ -40,8 +39,17 @@ mod tests {
 
     #[test]
     fn test_read_u64_be() {
-        assert_eq!(read_u64_be(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]), 1);
-        assert_eq!(read_u64_be(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]), 0x0102030405060708);
-        assert_eq!(read_u64_be(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]), 0xFFFFFFFFFFFFFFFF);
+        assert_eq!(
+            read_u64_be(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]),
+            1
+        );
+        assert_eq!(
+            read_u64_be(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+            0x0102030405060708
+        );
+        assert_eq!(
+            read_u64_be(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+            0xFFFFFFFFFFFFFFFF
+        );
     }
 }

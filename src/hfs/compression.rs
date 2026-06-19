@@ -16,8 +16,7 @@ impl CmpfHeader {
         Some(Self {
             compression_type: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
             uncompressed_size: u64::from_le_bytes([
-                data[8], data[9], data[10], data[11],
-                data[12], data[13], data[14], data[15],
+                data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
             ]),
         })
     }
@@ -95,7 +94,9 @@ mod tests {
 
     #[test]
     fn test_is_hfs_compressed_no_magic() {
-        assert!(!is_hfs_compressed(b"CMFF\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"));
+        assert!(!is_hfs_compressed(
+            b"CMFF\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        ));
     }
 
     #[test]
@@ -161,8 +162,8 @@ mod tests {
     #[test]
     fn test_decompress_cmpf_zlib() {
         // Create a valid zlib-compressed payload
-        use flate2::write::ZlibEncoder;
         use flate2::Compression;
+        use flate2::write::ZlibEncoder;
         use std::io::Write;
 
         let original = b"Hello from compressed HFS+ file!";

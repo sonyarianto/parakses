@@ -1,7 +1,7 @@
-use crate::blockio::physical::PhysicalDrive;
 use crate::blockio::BlockDevice;
-use crate::volume::partition::{self, PartitionTable};
+use crate::blockio::physical::PhysicalDrive;
 use crate::volume::VolumeDiscovery;
+use crate::volume::partition::{self, PartitionTable};
 
 #[derive(Debug)]
 pub struct WindowsVolume {

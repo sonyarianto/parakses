@@ -24,7 +24,10 @@ impl BlockDevice for MemFile {
     fn read_sector(&self, lba: u64) -> io::Result<Vec<u8>> {
         let offset = lba as usize * self.sector_size as usize;
         if offset >= self.data.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sector beyond end of image"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "sector beyond end of image",
+            ));
         }
         let end = (offset + self.sector_size as usize).min(self.data.len());
         let mut buf = vec![0u8; self.sector_size as usize];
