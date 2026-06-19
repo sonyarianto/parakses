@@ -2,19 +2,19 @@
 
 ## Goal
 
-A native Rust CLI application that can read **HFS+ (Mac OS Extended)** volumes on Windows 11. The user connects an HFS+-formatted disk (flash / external) and the tool can list its contents and extract files.
+A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Windows 11, with both a **CLI** and a **native Windows GUI**. The user connects an HFS+-formatted disk (flash / external) or loads a disk image and can browse its contents and extract files.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│                User (CLI)               │
-├─────────────────────────────────────────┤
-│  parakses.exe <command> <args...>       │
-│    volumes | list | cat | extract       │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
+┌──────────────────────────────────────────┐
+│        parakses (CLI) / parakses_gui     │
+│    volumes | list | cat | extract        │
+│    or native Win32 GUI window            │
+├──────────────────────────────────────────┤
+│              Library (lib.rs)            │
+│    Shared HFS+ logic used by both        │
+├──────────────────────────────────────────┤
 │          HFS+ Parser (pure Rust)        │
 │  ┌──────────┐ ┌──────────┐ ┌─────────┐  │
 │  │ Volume   │ │ Catalog  │ │ Extents │  │
@@ -24,19 +24,15 @@ A native Rust CLI application that can read **HFS+ (Mac OS Extended)** volumes o
 │  │ HFS+     │ │ Fork     │ │ Comp-   │  │
 │  │ Wrapper  │ │ Reader   │ │ ression │  │
 │  └──────────┘ └──────────┘ └─────────┘  │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│      Windows Raw Disk Layer             │
-│  (Win32 FFI: CreateFile on              │
-│   \\.\PhysicalDriveN )                  │
-└─────────────────────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│      Windows Volume Discovery           │
-│  (MBR + GPT partition table parsing,    │
-│   detection via type 0xAF / Apple GUID) │
-└─────────────────────────────────────────┘
+├──────────────────────────────────────────┤
+│      Windows Raw Disk Layer              │
+│  (Win32 FFI: CreateFile on               │
+│   \\.\PhysicalDriveN )                   │
+├──────────────────────────────────────────┤
+│      Windows Volume Discovery            │
+│  (MBR + GPT partition table parsing,     │
+│   detection via type 0xAF / Apple GUID)  │
+└──────────────────────────────────────────┘
 ```
 
 ## Implementation Status
@@ -129,6 +125,20 @@ A native Rust CLI application that can read **HFS+ (Mac OS Extended)** volumes o
 - [x] Case-insensitive catalog matching for HFS+ volumes
 - [ ] Checksum validation (skipped — low impact)
 
+### Phase 10 — Native Windows GUI ✅
+
+- `windows` crate (0.58) for Win32 bindings
+- Library crate (`lib.rs`) created so both CLI and GUI share the same HFS+ parser
+- Main window with:
+  - **Menu bar**: File (Open Image..., Exit) and Help (About)
+  - **Toolbar**: Volume combo box, path text field, Up and Extract buttons
+  - **List view**: SysListView32 in report mode with Name, Size, Type columns
+  - **Status bar**: Volume name, file/folder counts, free space
+- Double-click folders to navigate; Up button for parent directory
+- Extract button with Save File dialog for exporting files
+- Open Image dialog for loading `.img`/`.dmg`/`.raw`/`.dd` files
+- File dialogs via raw `comdlg32` FFI
+
 ## CLI Usage
 
 ```
@@ -141,38 +151,55 @@ parakses extract <index> /src /dst    Extract file to Windows filesystem
 
 The `<index>` is the volume number shown by `volumes` (0, 1, 2, ...).
 
-## Module Layout
+## GUI Usage
+
+```
+cargo run --bin parakses_gui
+```
+
+(Run as Administrator for physical drive access.)
+
+- Select a volume from the drop-down to browse its root
+- Double-click folders to navigate
+- Click Extract to save a file to your Windows filesystem
+- File → Open Image... to load a raw disk image
+- Help → About for version info
+
+## Crate Layout
 
 ```
 src/
-├── main.rs              # CLI entry point (all command dispatch)
-├── cli.rs               # clap argument definitions
-├── error.rs             # Custom error types (ParaksesError)
+├── lib.rs                # Library crate root; re-exports all public API
+├── main.rs               # CLI entry point (all command dispatch)
+├── bin/
+│   └── parakses_gui.rs   # Native Windows GUI (Win32, windows crate 0.58)
+├── cli.rs                # clap argument definitions
+├── error.rs              # Custom error types (ParaksesError)
 ├── volume/
-│   ├── mod.rs           # VolumeDiscovery trait
-│   ├── partition.rs     # MBR + GPT partition parsing, HFS+ type detection
-│   └── windows.rs       # WindowsVolumeEnumerator, HfsPartitionInfo
+│   ├── mod.rs            # VolumeDiscovery trait
+│   ├── partition.rs      # MBR + GPT partition parsing, HFS+ type detection
+│   └── windows.rs        # WindowsVolumeEnumerator, HfsPartitionInfo
 ├── blockio/
-│   ├── mod.rs           # BlockDevice trait
-│   ├── physical.rs      # PhysicalDrive (Win32 FFI: CreateFile, ReadFile, etc.)
-│   ├── filedevice.rs    # FileDevice (raw disk image as block device)
-│   └── memfile.rs       # In-memory block device for testing
+│   ├── mod.rs            # BlockDevice trait
+│   ├── physical.rs       # PhysicalDrive (Win32 FFI: CreateFile, ReadFile, etc.)
+│   ├── filedevice.rs     # FileDevice (raw disk image as block device)
+│   └── memfile.rs        # In-memory block device for testing
 ├── hfs/
-│   ├── mod.rs           # HfsVolume struct (open, read, list, resolve path)
-│   ├── volume_header.rs # VolumeHeader, HfsPlusExtentDescriptor, HfsPlusForkData
+│   ├── mod.rs            # HfsVolume struct (open, read, list, resolve path)
+│   ├── volume_header.rs  # VolumeHeader, HfsPlusExtentDescriptor, HfsPlusForkData
 │   ├── btree/
-│   │   ├── mod.rs       # BTreeReader (iterate leaves, search keys)
-│   │   ├── node.rs      # NodeDescriptor, HeaderRecord, record offset helpers
-│   │   └── key.rs       # Catalog key (raw + typed), Extent key parsing
-│   ├── catalog.rs       # CatalogReader (list dirs, find children, parse records)
-│   ├── extents.rs       # ExtentsOverflowReader (lookup overflow extents)
-│   ├── attribute.rs     # AttributesReader (stub)
-│   ├── fork.rs          # ForkReader (allocation block → sector reads)
-│   ├── compression.rs   # cmpf detection + zlib decompression
-│   └── unicode.rs       # UTF-16BE → String conversion
+│   │   ├── mod.rs        # BTreeReader (iterate leaves, search keys)
+│   │   ├── node.rs       # NodeDescriptor, HeaderRecord, record offset helpers
+│   │   └── key.rs        # Catalog key (raw + typed), Extent key parsing
+│   ├── catalog.rs        # CatalogReader (list dirs, find children, parse records)
+│   ├── extents.rs        # ExtentsOverflowReader (lookup overflow extents)
+│   ├── attribute.rs      # AttributesReader (stub)
+│   ├── fork.rs           # ForkReader (allocation block → sector reads)
+│   ├── compression.rs    # cmpf detection + zlib decompression
+│   └── unicode.rs        # UTF-16BE → String conversion
 └── util/
-    ├── mod.rs           # Big-endian read helpers (u16, u32, u64)
-    └── date.rs          # HFS+ Mac epoch → Unix timestamp conversion
+    ├── mod.rs            # Big-endian read helpers (u16, u32, u64)
+    └── date.rs           # HFS+ Mac epoch → Unix timestamp conversion
 ```
 
 ## Dependencies
@@ -188,13 +215,14 @@ uuid = { version = "1", features = ["v4"] }
 flate2 = { version = "1", optional = true }
 unicode-normalization = "0.1"
 crc32fast = "1"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }
 
 [features]
 default = ["compression"]
 compression = ["flate2"]
 ```
 
-Win32 API calls are via direct `unsafe extern "system"` FFI declarations in `physical.rs` — no `windows-sys`/`windows` crate dependency.
+Win32 API calls in the CLI (`physical.rs`) use direct `unsafe extern "system"` FFI declarations. The GUI (`parakses_gui.rs`) uses the `windows` crate 0.58 for all Win32 bindings plus raw `comdlg32` FFI for file dialogs.
 
 ## Requirements
 
@@ -224,11 +252,18 @@ Win32 API calls are via direct `unsafe extern "system"` FFI declarations in `phy
 
 ## Current Status
 
-The synthetic test image (`test_hfs.img`, 128 KB, MBR + HFS+) now works end-to-end:
+The synthetic test image (`test_hfs.img`, 128 KB, MBR + HFS+) works end-to-end with both CLI and GUI:
+
+**CLI:**
 - `parakses volumes --image test_hfs.img` → lists partition
 - `parakses list 0 / --image test_hfs.img` → shows hello.txt (29 bytes)
 - `parakses cat 0 /hello.txt --image test_hfs.img` → outputs "Hello from test HFS+ volume!"
 - `parakses extract 0 /hello.txt out.txt --image test_hfs.img` → extracts 29 bytes
+
+**GUI:**
+- `cargo run --bin parakses_gui` → launches native Windows window
+- File → Open Image... → select `test_hfs.img` → volume appears in combo box
+- Double-click to browse, Extract to save files
 
 ## Testing Strategy
 
@@ -239,8 +274,9 @@ The synthetic test image (`test_hfs.img`, 128 KB, MBR + HFS+) now works end-to-e
 ## Next Steps
 
 1. Write unit tests for parsing functions
-2. Test the tool against a real HFS+ USB disk on Windows 11
+2. Test the GUI against a real HFS+ USB disk on Windows 11
 3. Consider resource fork extraction
+4. Add keyboard shortcuts to GUI (Ctrl+O for open image, Ctrl+E for extract)
 
 ## Out of Scope
 

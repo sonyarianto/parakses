@@ -1,17 +1,12 @@
-#![allow(dead_code)]
+use parakses::blockio;
+use parakses::hfs;
+use parakses::volume;
 
-mod blockio;
-mod cli;
-mod error;
-mod hfs;
-mod util;
-mod volume;
-
-use blockio::BlockDevice;
+use parakses::blockio::BlockDevice;
 use clap::Parser;
-use cli::{Cli, Commands};
+use parakses::cli::{Cli, Commands};
 use std::io::Write;
-use volume::VolumeDiscovery;
+use parakses::volume::VolumeDiscovery;
 
 fn open_volume(cli: &Cli, volume_index: u32) -> anyhow::Result<hfs::HfsVolume> {
     if let Some(img_path) = &cli.image {

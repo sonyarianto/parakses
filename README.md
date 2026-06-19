@@ -1,15 +1,16 @@
 # parakses
 
-A native Rust CLI tool to read **HFS+ (Mac OS Extended)** volumes on Windows 11.
+A native Rust tool to read **HFS+ (Mac OS Extended)** volumes on Windows 11 — with both a **CLI** and a **GUI**.
 
 Plug in an HFS+-formatted USB drive or open a raw disk image and browse/extract files — no Mac needed.
 
 ## Features
 
 - List available HFS+ volumes on physical drives or raw disk images
-- Browse directory contents with `list` / `ls`
+- Browse directory contents with `list` / `ls` (CLI) or point-and-click (GUI)
 - Print file contents to stdout with `cat`
 - Extract files to the Windows filesystem with `extract` / `cp` / `export`
+- Native Windows GUI with list view, combo box, status bar, and menus
 - Supports MBR and GPT partition tables
 - HFS+ compression (zlib) decompression
 - Unicode normalization (NFD → NFC)
@@ -24,12 +25,43 @@ cd parakses
 cargo build --release
 ```
 
+Two binaries are produced:
+
+| Binary | Description |
+|--------|-------------|
+| `parakses` | Command-line interface |
+| `parakses_gui` | Native Windows GUI |
+
 **Requirements:**
 - Rust 1.96+
-- **Administrator privileges** — required to open `\\.\PhysicalDriveN` for raw disk access
+- **Administrator privileges** — required to open `\\.\PhysicalDriveN` for raw disk access (image files do not require admin)
 - Windows 10 or 11
 
-## Usage
+## GUI Usage
+
+Launch the GUI (run as Administrator for physical drive access):
+
+```
+cargo run --bin parakses_gui
+```
+
+The GUI window shows:
+- **Volume selector** (top-left) — combo box listing all detected HFS+ volumes on physical drives and any loaded disk images
+- **Path bar** (top-center) — shows current directory path on the volume
+- **Up / Extract buttons** (top-right)
+- **File list** (middle) — detailed list view with Name, Size, Type columns
+- **Status bar** (bottom) — displays volume info (name, file/folder count, free space)
+
+### Using the GUI
+
+1. **Select a volume** from the drop-down — the root directory is listed automatically
+2. **Double-click a folder** to navigate into it
+3. **Click Up** to go to the parent directory
+4. **Select a file and click Extract** — a Save dialog appears; pick a destination
+5. **File → Open Image...** to load a raw disk image (`.img`, `.dmg`, `.raw`, `.dd`)
+6. **Help → About parakses** for version info
+
+## CLI Usage
 
 ### 1. List available volumes
 
@@ -130,42 +162,49 @@ parakses --image multi.img --partition 1 list 0 /
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│          parakses.exe <command>         │
-│    volumes | list | cat | extract       │
-├─────────────────────────────────────────┤
-│          HFS+ Parser (pure Rust)        │
-│  Volume Header | Catalog B-tree         │
-│  Extents B-tree | Fork Reader           │
-│  Compression (zlib) | Unicode           │
-├─────────────────────────────────────────┤
-│      Windows Raw Disk Layer             │
+┌──────────────────────────────────────────┐
+│        parakses (CLI) / parakses_gui     │
+│    volumes | list | cat | extract        │
+│    or native Win32 GUI window            │
+├──────────────────────────────────────────┤
+│              Library (lib.rs)            │
+│    Shared HFS+ logic used by both CLIs   │
+├──────────────────────────────────────────┤
+│          HFS+ Parser (pure Rust)         │
+│  Volume Header | Catalog B-tree          │
+│  Extents B-tree | Fork Reader            │
+│  Compression (zlib) | Unicode            │
+├──────────────────────────────────────────┤
+│      Windows Raw Disk Layer              │
 │  (Win32 FFI: CreateFile on PhysicalDrive)│
-├─────────────────────────────────────────┤
-│      Windows Volume Discovery           │
-│  (MBR + GPT partition table parsing)    │
-└─────────────────────────────────────────┘
+├──────────────────────────────────────────┤
+│      Windows Volume Discovery            │
+│  (MBR + GPT partition table parsing)     │
+└──────────────────────────────────────────┘
 ```
 
 ## Project layout
 
 ```
 src/
-├── main.rs              # CLI entry point (command dispatch)
-├── cli.rs               # clap argument definitions
-├── error.rs             # Custom error types
-├── volume/              # Volume discovery (MBR, GPT, Windows enumeration)
-├── blockio/             # Block device abstraction (physical drive, file, memory)
-├── hfs/                 # HFS+ filesystem parser
-│   ├── btree/           # B-tree engine (generic, used by catalog + extents)
-│   ├── catalog.rs       # Directory listing and path resolution
-│   ├── extents.rs       # Extent overflow lookups
-│   ├── fork.rs          # Allocation block → sector reads
-│   ├── compression.rs   # HFS+ cmpf decompression
-│   ├── unicode.rs       # UTF-16BE decoding, NFD→NFC normalization
-│   ├── volume_header.rs # Volume header parsing
-│   └── attribute.rs     # Attributes reader (stub)
-└── util/                # Big-endian helpers, date conversion
+├── lib.rs                # Library crate root; re-exports all public API
+├── main.rs               # CLI entry point (command dispatch)
+├── bin/
+│   └── parakses_gui.rs   # Native Windows GUI (Win32, windows crate)
+├── cli.rs                # clap argument definitions
+├── error.rs              # Custom error types
+├── volume/               # Volume discovery (MBR, GPT, Windows enumeration)
+├── blockio/              # Block device abstraction (physical drive, file, memory)
+├── hfs/                  # HFS+ filesystem parser
+│   ├── btree/            # B-tree engine (generic, used by catalog + extents)
+│   ├── catalog.rs        # Directory listing and path resolution
+│   ├── extents.rs        # Extent overflow lookups
+│   ├── fork.rs           # Allocation block → sector reads
+│   ├── compression.rs    # HFS+ cmpf decompression
+│   ├── unicode.rs        # UTF-16BE decoding, NFD→NFC normalization
+│   ├── volume_header.rs  # Volume header parsing
+│   └── attribute.rs      # Attributes reader (stub)
+└── util/                 # Big-endian helpers, date conversion
 ```
 
 ## License

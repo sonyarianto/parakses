@@ -9,7 +9,7 @@ pub struct WindowsVolume {
     pub hfs_partitions: Vec<HfsPartitionInfo>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HfsPartitionInfo {
     pub start_lba: u64,
     pub sector_count: u64,
