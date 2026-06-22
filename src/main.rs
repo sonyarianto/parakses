@@ -17,8 +17,7 @@ fn open_volume(cli: &Cli, volume_index: u32) -> anyhow::Result<hfs::HfsVolume> {
             .first()
             .and_then(|v| v.hfs_partitions.get(cli.partition as usize))
             .ok_or_else(|| anyhow::anyhow!("No HFS+ partition {} in image", cli.partition))?;
-        let sector_size = drive.sector_size();
-        let volume_offset = hp.start_lba * u64::from(sector_size);
+        let volume_offset = hp.start_lba * 512; // partition LBAs are always in 512-byte units
         hfs::HfsVolume::open(drive, volume_offset)
     } else {
         let vols = volume::windows::WindowsVolumeEnumerator::enumerate()?;
@@ -31,8 +30,7 @@ fn open_volume(cli: &Cli, volume_index: u32) -> anyhow::Result<hfs::HfsVolume> {
             .ok_or_else(|| anyhow::anyhow!("No HFS+ partitions on this drive"))?;
         let drive: Box<dyn BlockDevice> =
             Box::new(blockio::physical::PhysicalDrive::open(vi.drive_index)?);
-        let sector_size = drive.sector_size();
-        let volume_offset = hp.start_lba * u64::from(sector_size);
+        let volume_offset = hp.start_lba * 512; // partition LBAs are always in 512-byte units
         hfs::HfsVolume::open(drive, volume_offset)
     }
 }

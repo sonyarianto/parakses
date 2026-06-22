@@ -151,8 +151,8 @@ mod tests {
 
     fn make_device() -> MemFile {
         let mut data = vec![0u8; 8192]; // 16 sectors of 512
-        for i in 0..data.len() {
-            data[i] = (i % 251) as u8; // prime modulus so each sector is unique
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = (i % 251) as u8; // prime modulus so each sector is unique
         }
         MemFile::new(data, 512)
     }

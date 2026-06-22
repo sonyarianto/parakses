@@ -1,6 +1,20 @@
 use crate::blockio::BlockDevice;
 use std::io;
 
+fn read_at(device: &dyn BlockDevice, byte_offset: u64, size: usize) -> io::Result<Vec<u8>> {
+    let sector_size = u64::from(device.sector_size());
+    let start_lba = byte_offset / sector_size;
+    let skip = (byte_offset % sector_size) as usize;
+    let total_bytes = size + skip;
+    let sectors_needed = total_bytes.div_ceil(sector_size as usize);
+    let mut buf = Vec::with_capacity(sectors_needed * sector_size as usize);
+    for i in 0..sectors_needed as u64 {
+        let sector = device.read_sector(start_lba + i)?;
+        buf.extend_from_slice(&sector);
+    }
+    Ok(buf[skip..skip + size].to_vec())
+}
+
 #[derive(Debug)]
 pub enum PartitionTable {
     Mbr(Vec<MbrPartition>),
@@ -123,7 +137,8 @@ fn parse_mbr_entries(data: &[u8]) -> Vec<MbrPartition> {
 }
 
 fn parse_gpt(device: &dyn BlockDevice, offset: u64) -> io::Result<(GptHeader, Vec<GptEntry>)> {
-    let sector = device.read_sector(offset + 1)?;
+    // GPT header is always at byte offset 512 (LBA 1 in 512-byte units)
+    let sector = read_at(device, offset * 512 + 512, 512)?;
 
     if &sector[..8] != b"EFI PART" {
         return Err(io::Error::new(
@@ -208,12 +223,11 @@ fn read_gpt_entries(
     header: &GptHeader,
     _offset: u64,
 ) -> io::Result<Vec<GptEntry>> {
-    let sector_size = u64::from(device.sector_size());
     let entry_size = header.partition_entry_size as usize;
     let total_entries = header.num_partition_entries as usize;
-    let bytes_per_sector = sector_size as usize;
+    let sector_size = device.sector_size() as usize;
 
-    let entries_per_sector = bytes_per_sector / entry_size;
+    let entries_per_sector = sector_size / entry_size;
     if entries_per_sector == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -221,17 +235,18 @@ fn read_gpt_entries(
         ));
     }
 
-    let start_sector = header.partition_entry_lba;
+    let start_byte = header.partition_entry_lba * 512;
 
     let mut entries = Vec::with_capacity(total_entries);
 
     for i in 0..total_entries {
-        let sector_idx = start_sector + (i / entries_per_sector) as u64;
+        let sector_idx = i / entries_per_sector;
         let entry_in_sector = i % entries_per_sector;
+        let byte_off = start_byte + sector_idx as u64 * sector_size as u64;
+
+        let sector_data = read_at(device, byte_off, sector_size)?;
+
         let entry_offset_in_sector = entry_in_sector * entry_size;
-
-        let sector_data = device.read_sector(sector_idx)?;
-
         if entry_offset_in_sector + entry_size > sector_data.len() {
             break;
         }

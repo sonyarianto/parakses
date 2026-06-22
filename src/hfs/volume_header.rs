@@ -91,11 +91,11 @@ pub struct VolumeHeader {
     pub write_count: u32,
     pub encodings_bitmap: u64,
     pub finder_info: [u32; 8],
-    pub allocation_file: HfsPlusExtentDescriptor,
-    pub extents_file: HfsPlusExtentDescriptor,
-    pub catalog_file: HfsPlusExtentDescriptor,
-    pub attributes_file: HfsPlusExtentDescriptor,
-    pub startup_file: HfsPlusExtentDescriptor,
+    pub allocation_file: HfsPlusForkData,
+    pub extents_file: HfsPlusForkData,
+    pub catalog_file: HfsPlusForkData,
+    pub attributes_file: HfsPlusForkData,
+    pub startup_file: HfsPlusForkData,
     pub btree_nodes: u32,
     pub first_allocation_block: u32,
 }
@@ -159,13 +159,13 @@ impl VolumeHeader {
                 read_u32_be(&data[104..]),
                 read_u32_be(&data[108..]),
             ],
-            allocation_file: HfsPlusExtentDescriptor::parse(&data[112..]),
-            extents_file: HfsPlusExtentDescriptor::parse(&data[120..]),
-            catalog_file: HfsPlusExtentDescriptor::parse(&data[128..]),
-            attributes_file: HfsPlusExtentDescriptor::parse(&data[136..]),
-            startup_file: HfsPlusExtentDescriptor::parse(&data[144..]),
-            btree_nodes: read_u32_be(&data[152..]),
-            first_allocation_block: read_u32_be(&data[156..]),
+            allocation_file: HfsPlusForkData::parse(&data[112..]),
+            extents_file: HfsPlusForkData::parse(&data[192..]),
+            catalog_file: HfsPlusForkData::parse(&data[272..]),
+            attributes_file: HfsPlusForkData::parse(&data[352..]),
+            startup_file: HfsPlusForkData::parse(&data[432..]),
+            btree_nodes: 0,
+            first_allocation_block: 0,
         })
     }
 
@@ -451,24 +451,39 @@ mod tests {
     #[test]
     fn test_vh_special_files() {
         let mut d = valid_vh_data();
-        // allocationFile at offset 112
-        d[112..120].copy_from_slice(&[0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01]);
-        // extentsFile at offset 120
-        d[120..128].copy_from_slice(&[0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01]);
-        // catalogFile at offset 128
-        d[128..136].copy_from_slice(&[0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x02]);
-        // attributesFile at offset 136
-        d[136..144].copy_from_slice(&[0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01]);
+        // allocationFile at offset 112 (80 bytes: logicalSize + clumpSize + totalBlocks + extents[8])
+        d[112..120].copy_from_slice(&0x0000000000001000u64.to_be_bytes()); // logicalSize=4096
+        // totalBlocks at offset 124
+        d[124..128].copy_from_slice(&1u32.to_be_bytes()); // totalBlocks=1
+        // extents[0] at offset 128
+        d[128..136].copy_from_slice(&[0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01]); // start_block=3, block_count=1
+
+        // extentsFile at offset 192
+        d[192..200].copy_from_slice(&0x0000000000001000u64.to_be_bytes());
+        d[204..208].copy_from_slice(&1u32.to_be_bytes());
+        d[208..216].copy_from_slice(&[0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01]);
+
+        // catalogFile at offset 272
+        d[272..280].copy_from_slice(&0x0000000000001C00u64.to_be_bytes()); // logicalSize=7168
+        d[284..288].copy_from_slice(&2u32.to_be_bytes());
+        d[288..296].copy_from_slice(&[0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x02]);
+
+        // attributesFile at offset 352
+        d[352..360].copy_from_slice(&0x0000000000001000u64.to_be_bytes());
+        d[364..368].copy_from_slice(&1u32.to_be_bytes());
+        d[368..376].copy_from_slice(&[0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01]);
 
         let vh = VolumeHeader::parse(&d).unwrap();
-        assert_eq!(vh.allocation_file.start_block, 3);
-        assert_eq!(vh.allocation_file.block_count, 1);
-        assert_eq!(vh.extents_file.start_block, 4);
-        assert_eq!(vh.extents_file.block_count, 1);
-        assert_eq!(vh.catalog_file.start_block, 5);
-        assert_eq!(vh.catalog_file.block_count, 2);
-        assert_eq!(vh.attributes_file.start_block, 7);
-        assert_eq!(vh.attributes_file.block_count, 1);
+        assert_eq!(vh.allocation_file.logical_size, 4096);
+        assert_eq!(vh.allocation_file.extents[0].start_block, 3);
+        assert_eq!(vh.allocation_file.extents[0].block_count, 1);
+        assert_eq!(vh.extents_file.extents[0].start_block, 4);
+        assert_eq!(vh.extents_file.extents[0].block_count, 1);
+        assert_eq!(vh.catalog_file.logical_size, 7168);
+        assert_eq!(vh.catalog_file.extents[0].start_block, 5);
+        assert_eq!(vh.catalog_file.extents[0].block_count, 2);
+        assert_eq!(vh.attributes_file.extents[0].start_block, 7);
+        assert_eq!(vh.attributes_file.extents[0].block_count, 1);
     }
 
     #[test]
@@ -483,9 +498,9 @@ mod tests {
         assert_eq!(extents[1].start_block, 3);
         assert_eq!(extents[1].block_count, 4);
         // remaining 6 extents should be zero
-        for i in 2..8 {
-            assert_eq!(extents[i].start_block, 0);
-            assert_eq!(extents[i].block_count, 0);
+        for ext in extents.iter().skip(2) {
+            assert_eq!(ext.start_block, 0);
+            assert_eq!(ext.block_count, 0);
         }
     }
 

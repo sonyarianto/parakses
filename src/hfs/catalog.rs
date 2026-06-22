@@ -298,8 +298,8 @@ mod tests {
             access_date: 0,
             backup_date: 0,
             text_encoding: 0,
-            data_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
-            resource_fork: HfsPlusForkData::parse(&vec![0u8; 80]),
+            data_fork: HfsPlusForkData::parse(&[0u8; 80]),
+            resource_fork: HfsPlusForkData::parse(&[0u8; 80]),
         });
         assert_eq!(file.file_id(), Some(99));
         assert!(!file.is_directory());

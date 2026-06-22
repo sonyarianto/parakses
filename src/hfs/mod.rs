@@ -42,7 +42,7 @@ pub struct DirEntry {
 }
 
 enum VolumeKind {
-    HfsPlus { header: VolumeHeader },
+    HfsPlus { header: Box<VolumeHeader> },
     HfsOriginal { mdb: HfsMdb },
 }
 
@@ -74,7 +74,9 @@ impl HfsVolume {
             return Ok(Self {
                 device,
                 volume_offset,
-                kind: VolumeKind::HfsPlus { header },
+                kind: VolumeKind::HfsPlus {
+                    header: Box::new(header),
+                },
             });
         }
 
@@ -224,18 +226,20 @@ impl HfsVolume {
         }
     }
 
-    fn build_fork_from_extent(&self, start_block: u64, block_count: u64) -> ForkReader<'_> {
-        let fork_size = block_count * u64::from(self.block_size());
+    fn build_fork_from_fork_data(&self, fork: &HfsPlusForkData) -> ForkReader<'_> {
         let mut reader = ForkReader::new(
             self.device.as_ref(),
             self.volume_offset,
             self.block_size(),
-            fork_size,
+            fork.logical_size,
         );
-        reader.set_extents(vec![HfsPlusExtentDescriptor {
-            start_block: start_block as u32,
-            block_count: block_count as u32,
-        }]);
+        let inline: Vec<HfsPlusExtentDescriptor> = fork
+            .extents
+            .iter()
+            .filter(|e| e.block_count > 0)
+            .cloned()
+            .collect();
+        reader.set_extents(inline);
         reader
     }
 
@@ -274,10 +278,7 @@ impl HfsVolume {
 
     pub fn catalog_fork_reader(&self) -> ForkReader<'_> {
         match &self.kind {
-            VolumeKind::HfsPlus { header } => {
-                let extent = header.catalog_file.clone();
-                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
-            }
+            VolumeKind::HfsPlus { header } => self.build_fork_from_fork_data(&header.catalog_file),
             VolumeKind::HfsOriginal { mdb } => {
                 let extents = &mdb.ct_extents;
                 self.build_fork_from_hfs_extents(extents, mdb.ct_fl_size as u64)
@@ -287,10 +288,7 @@ impl HfsVolume {
 
     pub fn extents_fork_reader(&self) -> ForkReader<'_> {
         match &self.kind {
-            VolumeKind::HfsPlus { header } => {
-                let extent = header.extents_file.clone();
-                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
-            }
+            VolumeKind::HfsPlus { header } => self.build_fork_from_fork_data(&header.extents_file),
             VolumeKind::HfsOriginal { mdb } => {
                 let extents = &mdb.xt_extents;
                 self.build_fork_from_hfs_extents(extents, mdb.xt_fl_size as u64)
@@ -301,8 +299,7 @@ impl HfsVolume {
     pub fn attributes_fork_reader(&self) -> ForkReader<'_> {
         match &self.kind {
             VolumeKind::HfsPlus { header } => {
-                let extent = header.attributes_file.clone();
-                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
+                self.build_fork_from_fork_data(&header.attributes_file)
             }
             VolumeKind::HfsOriginal { .. } => {
                 // HFS original has no attributes file

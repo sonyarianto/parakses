@@ -14,7 +14,7 @@ use windows::Win32::UI::Controls::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
 
-use parakses::blockio::{self, BlockDevice};
+use parakses::blockio;
 use parakses::hfs::{self, HfsVolume};
 use parakses::volume::{VolumeDiscovery, windows::*};
 
@@ -212,15 +212,13 @@ fn open_hfs(state: &GuiState, vol_idx: usize) -> Result<HfsVolume, String> {
         let path = Path::new(img);
         let drive = blockio::filedevice::FileDevice::open(path)
             .map_err(|e| format!("Failed to open image: {}", e))?;
-        let sector_size = drive.sector_size();
-        let volume_offset = part.start_lba * u64::from(sector_size);
+        let volume_offset = part.start_lba * 512; // partition LBAs are always in 512-byte units
         HfsVolume::open(Box::new(drive), volume_offset)
             .map_err(|e| format!("Failed to open HFS volume: {}", e))
     } else {
         let drive = blockio::physical::PhysicalDrive::open(entry.drive_index)
             .map_err(|e| format!("Failed to open drive: {}", e))?;
-        let sector_size = drive.sector_size();
-        let volume_offset = part.start_lba * u64::from(sector_size);
+        let volume_offset = part.start_lba * 512; // partition LBAs are always in 512-byte units
         HfsVolume::open(Box::new(drive), volume_offset)
             .map_err(|e| format!("Failed to open HFS volume: {}", e))
     }
