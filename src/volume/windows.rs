@@ -146,5 +146,21 @@ fn find_hfs_partitions(table: &PartitionTable) -> Vec<HfsPartitionInfo> {
                 }
             })
             .collect(),
+        PartitionTable::Apm(entries) => entries
+            .iter()
+            .filter(|e| partition::is_hfs_apm(&e.partition_type))
+            .map(|e| {
+                let name = if e.name.is_empty() {
+                    None
+                } else {
+                    Some(e.name.clone())
+                };
+                HfsPartitionInfo {
+                    start_lba: e.logical_start,
+                    sector_count: e.logical_count,
+                    name,
+                }
+            })
+            .collect(),
     }
 }

@@ -22,6 +22,7 @@ pub enum PartitionTable {
         header: GptHeader,
         entries: Vec<GptEntry>,
     },
+    Apm(Vec<ApmEntry>),
 }
 
 #[derive(Debug)]
@@ -55,6 +56,16 @@ pub struct GptEntry {
     pub name: String,
 }
 
+#[derive(Debug)]
+pub struct ApmEntry {
+    pub start_lba: u64,
+    pub sector_count: u64,
+    pub name: String,
+    pub partition_type: String,
+    pub logical_start: u64,
+    pub logical_count: u64,
+}
+
 pub fn is_hfs_mbr(part_type: u8) -> bool {
     part_type == 0xAF
 }
@@ -65,6 +76,73 @@ pub fn is_hfs_gpt(guid: &uuid::Uuid) -> bool {
         0xAC,
     ]);
     *guid == apple_hfs
+}
+
+pub fn is_hfs_apm(type_name: &str) -> bool {
+    type_name == "Apple_HFS" || type_name == "Apple_HFSX"
+}
+
+fn read_cstr(data: &[u8], offset: usize, max_len: usize) -> String {
+    let end = data[offset..]
+        .iter()
+        .take(max_len)
+        .position(|&b| b == 0)
+        .unwrap_or(max_len);
+    String::from_utf8_lossy(&data[offset..offset + end]).to_string()
+}
+
+fn parse_apm(device: &dyn BlockDevice, _offset: u64) -> io::Result<Vec<ApmEntry>> {
+    // APM entries start at block 1 (byte 512). Read first entry to get map count.
+    let raw = read_at(device, 512, 512)?;
+    if raw.len() < 512 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Too short for APM",
+        ));
+    }
+    let sig = u16::from_be_bytes([raw[0], raw[1]]);
+    if sig != 0x504D {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not an APM entry",
+        ));
+    }
+    let map_entries = u32::from_be_bytes([raw[4], raw[5], raw[6], raw[7]]);
+    if map_entries == 0 || map_entries > 256 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid APM entry count: {}", map_entries),
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(map_entries as usize);
+    for i in 0..map_entries as u64 {
+        let byte_off = 512 + i * 512;
+        let raw = read_at(device, byte_off, 512)?;
+        if raw.len() < 512 {
+            break;
+        }
+        let sig = u16::from_be_bytes([raw[0], raw[1]]);
+        if sig != 0x504D {
+            break;
+        }
+        let start_lba = u32::from_be_bytes([raw[8], raw[9], raw[10], raw[11]]) as u64;
+        let sector_count = u32::from_be_bytes([raw[12], raw[13], raw[14], raw[15]]) as u64;
+        let name = read_cstr(&raw, 16, 32);
+        let partition_type = read_cstr(&raw, 48, 32);
+        let logical_start = u32::from_be_bytes([raw[80], raw[81], raw[82], raw[83]]) as u64;
+        let logical_count = u32::from_be_bytes([raw[84], raw[85], raw[86], raw[87]]) as u64;
+        entries.push(ApmEntry {
+            start_lba,
+            sector_count,
+            name,
+            partition_type,
+            logical_start,
+            logical_count,
+        });
+    }
+
+    Ok(entries)
 }
 
 pub fn detect_partition_table(
@@ -78,6 +156,12 @@ pub fn detect_partition_table(
     }
 
     if sector[0x1FE] != 0x55 || sector[0x1FF] != 0xAA {
+        // No MBR signature — check for APM at block 1
+        if let Ok(apm) = parse_apm(device, offset)
+            && !apm.is_empty()
+        {
+            return Ok(Some(PartitionTable::Apm(apm)));
+        }
         return Ok(None);
     }
 
@@ -100,6 +184,14 @@ pub fn detect_partition_table(
                 );
             }
         }
+    }
+
+    // If MBR has no actual partitions, try APM
+    if mbr_partitions.is_empty()
+        && let Ok(apm) = parse_apm(device, offset)
+        && !apm.is_empty()
+    {
+        return Ok(Some(PartitionTable::Apm(apm)));
     }
 
     Ok(Some(PartitionTable::Mbr(mbr_partitions)))
@@ -534,5 +626,99 @@ mod tests {
         let disk = vec![0u8; 10];
         let device = MemFile::new(disk, 512);
         assert!(detect_partition_table(&device, 0).unwrap().is_none());
+    }
+
+    fn apm_disk(entries: &[(&str, u32, u32, &str)]) -> Vec<u8> {
+        let map_blocks = entries.len() as u32 + 1; // +1 for the map entry itself
+        // Total size: at least 2 sectors (0 + map), plus the partition data areas
+        // We need the disk to be big enough to cover all partition data
+        let total_blocks = entries.iter().map(|(_, _, cnt, _)| cnt).max().unwrap_or(&0) + 1;
+        let disk_size = ((map_blocks as u64 + total_blocks as u64 + 1) * 512) as usize;
+        let mut disk = vec![0u8; disk_size.max(2048)];
+
+        for (i, &(name, start, count, ptype)) in entries.iter().enumerate() {
+            let off = 512 + i * 512;
+            disk[off..off + 2].copy_from_slice(&0x504Du16.to_be_bytes()); // PMSig
+            disk[off + 4..off + 8].copy_from_slice(&map_blocks.to_be_bytes()); // PMMapBlkCnt
+            disk[off + 8..off + 12].copy_from_slice(&start.to_be_bytes()); // PMPyPartStart
+            disk[off + 12..off + 16].copy_from_slice(&count.to_be_bytes()); // PMPyPartCnt
+            let name_bytes = name.as_bytes();
+            let name_len = name_bytes.len().min(31);
+            disk[off + 16..off + 16 + name_len].copy_from_slice(&name_bytes[..name_len]);
+            let type_bytes = ptype.as_bytes();
+            let type_len = type_bytes.len().min(31);
+            disk[off + 48..off + 48 + type_len].copy_from_slice(&type_bytes[..type_len]);
+            disk[off + 80..off + 84].copy_from_slice(&start.to_be_bytes()); // PMLgDataStart
+            disk[off + 84..off + 88].copy_from_slice(&count.to_be_bytes()); // PMDataCnt
+        }
+        disk
+    }
+
+    #[test]
+    fn test_parse_apm_basic() {
+        let disk = apm_disk(&[
+            ("Apple", 1, 1, "Apple_partition_map"),
+            ("Untitled", 2, 100, "Apple_HFS"),
+            ("Free", 102, 50, "Apple_Free"),
+        ]);
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Apm(entries) => {
+                assert_eq!(entries.len(), 3);
+                assert_eq!(entries[0].name, "Apple");
+                assert_eq!(entries[0].partition_type, "Apple_partition_map");
+                assert_eq!(entries[0].start_lba, 1);
+                assert_eq!(entries[0].sector_count, 1);
+                assert_eq!(entries[1].partition_type, "Apple_HFS");
+                assert_eq!(entries[1].start_lba, 2);
+                assert_eq!(entries[1].sector_count, 100);
+                assert_eq!(entries[2].partition_type, "Apple_Free");
+            }
+            _ => panic!("Expected APM"),
+        }
+    }
+
+    #[test]
+    fn test_parse_apm_hfsx() {
+        let disk = apm_disk(&[
+            ("Apple", 1, 1, "Apple_partition_map"),
+            ("MyVol", 2, 200, "Apple_HFSX"),
+        ]);
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Apm(entries) => {
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[1].partition_type, "Apple_HFSX");
+                assert!(is_hfs_apm(&entries[1].partition_type));
+                assert!(is_hfs_apm(&entries[1].partition_type));
+            }
+            _ => panic!("Expected APM"),
+        }
+    }
+
+    #[test]
+    fn test_is_hfs_apm() {
+        assert!(is_hfs_apm("Apple_HFS"));
+        assert!(is_hfs_apm("Apple_HFSX"));
+        assert!(!is_hfs_apm("Apple_partition_map"));
+        assert!(!is_hfs_apm("Apple_Free"));
+        assert!(!is_hfs_apm(""));
+    }
+
+    #[test]
+    fn test_no_apm_on_plain_mbr() {
+        // A plain MBR disk (no APM at block 1) should return MBR, not APM
+        let disk = mbr_disk(&[(0xAF, 1, 255)]);
+        let device = make_memfile(disk);
+        let table = detect_partition_table(&device, 0).unwrap().unwrap();
+        match table {
+            PartitionTable::Mbr(parts) => {
+                assert_eq!(parts.len(), 1);
+                assert_eq!(parts[0].partition_type, 0xAF);
+            }
+            _ => panic!("Expected MBR"),
+        }
     }
 }
