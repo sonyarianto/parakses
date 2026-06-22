@@ -4,6 +4,13 @@ pub mod node;
 use crate::hfs::fork::ForkReader;
 use node::{HeaderRecord, NodeDescriptor, NodeType, read_record};
 
+/// The on-disk node type mapping differs between HFS+ and HFS (original).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BTreeVariant {
+    HfsPlus,
+    HfsOriginal,
+}
+
 pub struct BTreeRecord {
     pub key: Vec<u8>,
     pub value: Vec<u8>,
@@ -13,6 +20,7 @@ pub struct BTreeReader<'a> {
     fork: &'a ForkReader<'a>,
     header: HeaderRecord,
     node_size: u16,
+    variant: BTreeVariant,
 }
 
 impl<'a> BTreeReader<'a> {
@@ -23,7 +31,17 @@ impl<'a> BTreeReader<'a> {
             anyhow::bail!("B-tree node 0 is empty (corrupt fork)");
         }
 
-        let desc = NodeDescriptor::parse(&node0)?;
+        // Detect variant: HFS+ has HeaderNode=0, HFS original has HeaderNode=1
+        let (desc, variant) = if node0[8] == 0x01 {
+            // HFS original: kind=1 is HeaderNode
+            (
+                NodeDescriptor::parse_hfs(&node0)?,
+                BTreeVariant::HfsOriginal,
+            )
+        } else {
+            (NodeDescriptor::parse(&node0)?, BTreeVariant::HfsPlus)
+        };
+
         if desc.kind != NodeType::HeaderNode {
             anyhow::bail!("Node 0 is not a header node (kind={:?})", desc.kind);
         }
@@ -42,6 +60,7 @@ impl<'a> BTreeReader<'a> {
             fork,
             header,
             node_size,
+            variant,
         })
     }
 
@@ -62,9 +81,16 @@ impl<'a> BTreeReader<'a> {
         self.fork.read_range(offset, u64::from(self.node_size))
     }
 
+    fn parse_node_descriptor(&self, data: &[u8]) -> anyhow::Result<NodeDescriptor> {
+        match self.variant {
+            BTreeVariant::HfsOriginal => NodeDescriptor::parse_hfs(data),
+            BTreeVariant::HfsPlus => NodeDescriptor::parse(data),
+        }
+    }
+
     fn read_node_descriptor(&self, index: u32) -> anyhow::Result<NodeDescriptor> {
         let node_data = self.read_node_at(index)?;
-        NodeDescriptor::parse(&node_data)
+        self.parse_node_descriptor(&node_data)
     }
 
     pub fn iter_leaf_nodes(&self) -> anyhow::Result<Vec<Vec<BTreeRecord>>> {
@@ -99,7 +125,7 @@ impl<'a> BTreeReader<'a> {
 
     pub fn read_leaf_node(&self, node_index: u32) -> anyhow::Result<Vec<BTreeRecord>> {
         let node_data = self.read_node_at(node_index)?;
-        let desc = NodeDescriptor::parse(&node_data)?;
+        let desc = self.parse_node_descriptor(&node_data)?;
 
         if desc.kind != NodeType::LeafNode && desc.kind != NodeType::IndexNode {
             anyhow::bail!("Node {} is not a leaf or index node", node_index);
@@ -117,17 +143,32 @@ impl<'a> BTreeReader<'a> {
             };
 
             let raw = read_record(&node_data, off, next_off);
-            if raw.len() < 2 {
+            if raw.len() < 1 {
                 continue;
             }
 
-            let key_len = crate::util::read_u16_be(raw);
-            if key_len < 2 || key_len as usize > raw.len() {
-                continue;
-            }
-
-            let key_data = raw[2..key_len as usize].to_vec();
-            let value_data = raw[key_len as usize..].to_vec();
+            let (key_data, value_data) = match self.variant {
+                BTreeVariant::HfsOriginal => {
+                    let ck_key_len = raw[0] as usize;
+                    if ck_key_len == 0 || 1 + ck_key_len > raw.len() {
+                        continue;
+                    }
+                    let total_key = 1 + ck_key_len;
+                    let key_data = raw[2..total_key].to_vec();
+                    let value_data = raw[total_key..].to_vec();
+                    (key_data, value_data)
+                }
+                BTreeVariant::HfsPlus => {
+                    if raw.len() < 2 {
+                        continue;
+                    }
+                    let key_len = crate::util::read_u16_be(raw) as usize;
+                    if key_len < 2 || key_len > raw.len() {
+                        continue;
+                    }
+                    (raw[2..key_len].to_vec(), raw[key_len..].to_vec())
+                }
+            };
 
             records.push(BTreeRecord {
                 key: key_data,
@@ -148,7 +189,7 @@ impl<'a> BTreeReader<'a> {
         }
 
         let node_data = self.read_node_at(node_index)?;
-        let desc = NodeDescriptor::parse(&node_data)?;
+        let desc = self.parse_node_descriptor(&node_data)?;
         let offsets = node::record_offsets(&node_data, desc.num_records, self.node_size);
 
         match desc.kind {

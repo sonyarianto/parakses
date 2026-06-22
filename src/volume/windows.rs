@@ -83,14 +83,13 @@ impl WindowsVolumeEnumerator {
         let partition_table = match partition::detect_partition_table(device, 0) {
             Ok(Some(pt)) => pt,
             Ok(None) => {
-                // No partition table found — try treating the entire device as a raw HFS+ volume.
-                // Check if byte 1024 has a valid Volume Header signature.
-                let sector = device.read_sector(0)?;
-                if sector.len() < 1024 + 2 {
+                // No partition table found — try treating the entire device as a raw HFS volume.
+                let hdr = device.read_sectors(0, 3)?; // 3 sectors = 1536 bytes covers byte 1024
+                if hdr.len() < 1026 {
                     return Ok(Vec::new());
                 }
-                let sig = u16::from_be_bytes([sector[1024], sector[1025]]);
-                if sig == 0x482B || sig == 0x4858 {
+                let sig = u16::from_be_bytes([hdr[1024], hdr[1025]]);
+                if sig == 0x482B || sig == 0x4858 || sig == 0x4244 {
                     return Ok(vec![WindowsVolume {
                         drive_index: 0,
                         hfs_partitions: vec![HfsPartitionInfo {

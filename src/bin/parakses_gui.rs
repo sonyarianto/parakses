@@ -29,12 +29,12 @@ const IDM_EXIT: u32 = 201;
 const IDM_ABOUT: u32 = 300;
 
 const LVM_FIRST: u32 = 0x1000;
-const LVM_INSERTCOLUMNW: u32 = LVM_FIRST + 1;
+const LVM_INSERTCOLUMNW: u32 = LVM_FIRST + 97;
 const LVM_DELETEALLITEMS: u32 = LVM_FIRST + 9;
-const LVM_INSERTITEMW: u32 = LVM_FIRST + 7;
-const LVM_SETITEMTEXTW: u32 = LVM_FIRST + 52;
+const LVM_INSERTITEMW: u32 = LVM_FIRST + 77;
+const LVM_SETITEMTEXTW: u32 = LVM_FIRST + 116;
 const LVM_GETNEXTITEM: u32 = LVM_FIRST + 12;
-const LVM_GETITEMTEXTW: u32 = LVM_FIRST + 45;
+const LVM_GETITEMTEXTW: u32 = LVM_FIRST + 115;
 const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = LVM_FIRST + 54;
 const LVNI_SELECTED: u32 = 0x0002;
 const LVS_EX_FULLROWSELECT: u32 = 0x00000020;
@@ -50,7 +50,6 @@ const CB_SETCURSEL: u32 = 0x014E;
 const CB_GETCURSEL: u32 = 0x0148;
 const CB_SETITEMDATA: u32 = 0x014B;
 const CB_GETITEMDATA: u32 = 0x014A;
-const CB_RESETCONTENT: u32 = 0x014F;
 const CB_ERR: isize = -1;
 const BN_CLICKED: u32 = 0;
 const CBN_SELCHANGE: u32 = 1;
@@ -185,6 +184,18 @@ fn show_error(hwnd: HWND, msg: &str) {
     }
 }
 
+fn set_status(state: &GuiState, msg: &str) {
+    let w = to_wide(msg);
+    unsafe {
+        let _ = SendMessageW(
+            state.hwnd_status,
+            SB_SETTEXT,
+            WPARAM(0),
+            LPARAM(w.as_ptr() as isize),
+        );
+    }
+}
+
 fn show_about(hwnd: HWND) {
     let msg = to_wide("parakses v0.1.0\nHFS+ Reader for Windows 11");
     unsafe {
@@ -203,14 +214,14 @@ fn open_hfs(state: &GuiState, vol_idx: usize) -> Result<HfsVolume, String> {
         let sector_size = drive.sector_size();
         let volume_offset = part.start_lba * u64::from(sector_size);
         HfsVolume::open(Box::new(drive), volume_offset)
-            .map_err(|e| format!("Failed to open HFS+ volume: {}", e))
+            .map_err(|e| format!("Failed to open HFS volume: {}", e))
     } else {
         let drive = blockio::physical::PhysicalDrive::open(entry.drive_index)
             .map_err(|e| format!("Failed to open drive: {}", e))?;
         let sector_size = drive.sector_size();
         let volume_offset = part.start_lba * u64::from(sector_size);
         HfsVolume::open(Box::new(drive), volume_offset)
-            .map_err(|e| format!("Failed to open HFS+ volume: {}", e))
+            .map_err(|e| format!("Failed to open HFS volume: {}", e))
     }
 }
 
@@ -227,25 +238,38 @@ fn populate_list(state: &GuiState) {
 
     let hfs = match open_hfs(state, vol_idx) {
         Ok(h) => h,
-        Err(_) => return,
-    };
-
-    let entries = if state.current_path == "/" {
-        hfs.list_root()
-    } else {
-        let record = match hfs.resolve_path(&state.current_path) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
-        match record {
-            hfs::catalog::CatalogRecordData::Folder(f) => hfs.list_directory(f.folder_id),
-            _ => return,
+        Err(e) => {
+            set_status(state, &format!("open_hfs: {}", e));
+            return;
         }
     };
 
-    let entries = match entries {
-        Ok(e) => e,
-        Err(_) => return,
+    let entries = if state.current_path == "/" {
+        match hfs.list_root() {
+            Ok(e) => e,
+            Err(e) => {
+                set_status(state, &format!("list_root: {}", e));
+                return;
+            }
+        }
+    } else {
+        let record = match hfs.resolve_path(&state.current_path) {
+            Ok(r) => r,
+            Err(e) => {
+                set_status(state, &format!("resolve_path: {}", e));
+                return;
+            }
+        };
+        match record {
+            hfs::catalog::CatalogRecordData::Folder(f) => match hfs.list_directory(f.folder_id) {
+                Ok(e) => e,
+                Err(e) => {
+                    set_status(state, &format!("list_directory: {}", e));
+                    return;
+                }
+            },
+            _ => return,
+        }
     };
 
     let mut row = 0i32;
@@ -323,6 +347,16 @@ fn populate_list(state: &GuiState) {
         }
         row += 1;
     }
+    unsafe {
+        let _ = InvalidateRect(state.hwnd_list, None, BOOL(1));
+        let _ = UpdateWindow(state.hwnd_list);
+        let _ = RedrawWindow(
+            state.hwnd_list,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_ERASE,
+        );
+    }
 }
 
 fn refresh_list(state: &GuiState) {
@@ -336,9 +370,7 @@ fn refresh_list(state: &GuiState) {
     let vol_idx = match state.current_volume_idx {
         Some(i) => i,
         None => {
-            unsafe {
-                let _ = SetWindowTextW(state.hwnd_status, w!("No volume selected"));
-            }
+            set_status(state, "No volume selected");
             return;
         }
     };
@@ -353,17 +385,19 @@ fn refresh_list(state: &GuiState) {
                 info.folder_count,
                 format_size(u64::from(info.free_blocks) * u64::from(info.block_size))
             );
-            let w = to_wide(&status);
-            unsafe {
-                let _ = SetWindowTextW(state.hwnd_status, PCWSTR(w.as_ptr()));
-            }
+            set_status(state, &status);
         }
         Err(e) => {
-            let w = to_wide(&e);
-            unsafe {
-                let _ = SetWindowTextW(state.hwnd_status, PCWSTR(w.as_ptr()));
-            }
+            set_status(state, &e);
         }
+    }
+    unsafe {
+        let _ = RedrawWindow(
+            state.hwnd,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_ERASE,
+        );
     }
 }
 
@@ -416,29 +450,37 @@ fn load_volumes(state: &mut GuiState) {
         }
     }
 
-    unsafe {
-        let combo = state.hwnd_combo;
-        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
-        for (i, entry) in items.iter().enumerate() {
-            let w = to_wide(&entry.display);
-            let idx = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(w.as_ptr() as isize));
-            let _ = SendMessageW(
-                combo,
-                CB_SETITEMDATA,
-                WPARAM(idx.0 as usize),
-                LPARAM(i as isize),
-            );
-        }
-    }
-
     state.volumes = items;
     if !state.volumes.is_empty() {
         unsafe {
-            let _ = SendMessageW(state.hwnd_combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+            unsafe extern "system" {
+                fn SendMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+            }
+            for (i, entry) in state.volumes.iter().enumerate() {
+                let w = to_wide(&entry.display);
+                let idx = SendMessageW(state.hwnd_combo, CB_ADDSTRING, 0, w.as_ptr() as isize);
+                let _ = SendMessageW(state.hwnd_combo, CB_SETITEMDATA, idx as usize, i as isize);
+            }
+        }
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+                state.hwnd_combo,
+                CB_SETCURSEL,
+                WPARAM(0),
+                LPARAM(0),
+            );
         }
         state.current_volume_idx = Some(0);
         state.current_path = "/".to_string();
         refresh_list(state);
+        unsafe {
+            let _ = RedrawWindow(
+                state.hwnd,
+                None,
+                None,
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_ERASE,
+            );
+        }
     }
 }
 
@@ -472,13 +514,16 @@ fn on_go_up(state: &mut GuiState) {
 
 fn get_selected_item_name(hwnd_list: HWND) -> Option<String> {
     unsafe {
+        unsafe extern "system" {
+            fn SendMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+        }
         let sel = SendMessageW(
             hwnd_list,
             LVM_GETNEXTITEM,
-            WPARAM((-1i32) as usize),
-            LPARAM(LVNI_SELECTED as isize),
+            (-1i32) as usize,
+            LVNI_SELECTED as isize,
         );
-        if sel.0 == -1 {
+        if sel == -1 {
             return None;
         }
         let mut buf = vec![0u16; 1024];
@@ -487,11 +532,11 @@ fn get_selected_item_name(hwnd_list: HWND) -> Option<String> {
         item.pszText = buf.as_mut_ptr();
         item.cchTextMax = buf.len() as i32;
         item.mask = LVIF_TEXT;
-        let _ = SendMessageW(
+        SendMessageW(
             hwnd_list,
             LVM_GETITEMTEXTW,
-            WPARAM(sel.0 as usize),
-            LPARAM(&item as *const _ as isize),
+            sel as usize,
+            &item as *const _ as isize,
         );
         let name = from_wide_lossy(&buf);
         Some(name)
@@ -722,9 +767,17 @@ fn on_open_image(state: &mut GuiState) {
     }
 
     let path = from_wide_lossy(&buf);
-    state.image_path = Some(path);
+    state.image_path = Some(path.clone());
     state.current_path = "/".to_string();
     load_volumes(state);
+    unsafe {
+        let _ = RedrawWindow(
+            state.hwnd,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_ERASE,
+        );
+    }
 }
 
 unsafe extern "system" fn wnd_proc(
@@ -849,7 +902,9 @@ fn create_gui(hwnd: HWND) -> GuiState {
             WINDOW_EX_STYLE(WS_EX_CLIENTEDGE),
             w!("ComboBox"),
             w!(""),
-            WINDOW_STYLE(CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP),
+            WINDOW_STYLE(
+                CBS_DROPDOWNLIST | (CBS_HASSTRINGS as u32) | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            ),
             10,
             4,
             280,
@@ -936,24 +991,26 @@ fn create_gui(hwnd: HWND) -> GuiState {
 
         let headers = ["Name", "Size", "Type"];
         let widths = [360, 100, 100];
-        for (i, (&h, &w)) in headers.iter().zip(widths.iter()).enumerate() {
-            let h_w = to_wide(h);
-            let lvc = LVCOLUMNW {
-                mask: LVCF_FMT | LVCF_WIDTH | LVCF_TEXT,
-                fmt: if i == 1 { LVCFMT_RIGHT } else { LVCFMT_LEFT },
-                cx: w,
-                pszText: h_w.as_ptr(),
-                cchTextMax: h.len() as i32,
-                iSubItem: i as i32,
-                iImage: 0,
-                iOrder: 0,
-            };
-            let _ = SendMessageW(
-                hwnd_list,
-                LVM_INSERTCOLUMNW,
-                WPARAM(i),
-                LPARAM(&lvc as *const _ as isize),
-            );
+        {
+            unsafe extern "system" {
+                fn SendMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+            }
+            for (i, (&h, &w)) in headers.iter().zip(widths.iter()).enumerate() {
+                let h_w = to_wide(h);
+                let mut lvc: LVCOLUMNW = mem::zeroed();
+                lvc.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT;
+                lvc.fmt = if i == 1 { LVCFMT_RIGHT } else { LVCFMT_LEFT };
+                lvc.cx = w;
+                lvc.pszText = h_w.as_ptr();
+                lvc.cchTextMax = h.len() as i32;
+                lvc.iSubItem = i as i32;
+                SendMessageW(
+                    hwnd_list,
+                    LVM_INSERTCOLUMNW,
+                    i as usize,
+                    &lvc as *const _ as isize,
+                );
+            }
         }
 
         let hwnd_status = CreateWindowExW(

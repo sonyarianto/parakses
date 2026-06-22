@@ -87,6 +87,33 @@ impl HfsPlusExtentKey {
     }
 }
 
+/// HFS (original) catalog key — uses Pascal string node names (MacRoman).
+#[derive(Debug)]
+pub struct HfsCatalogKeyRaw {
+    pub data: Vec<u8>,
+}
+
+impl HfsCatalogKeyRaw {
+    pub fn parent_id(&self) -> u32 {
+        if self.data.len() >= 4 {
+            read_u32_be(&self.data)
+        } else {
+            0
+        }
+    }
+
+    pub fn node_name(&self) -> String {
+        if self.data.len() < 5 {
+            return String::new();
+        }
+        let name_len = self.data[4] as usize;
+        let max_avail = self.data.len() - 5;
+        let len = name_len.min(max_avail);
+        // HFS original uses MacRoman encoding. For simplicity, treat as Latin-1.
+        self.data[5..5 + len].iter().map(|&b| b as char).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

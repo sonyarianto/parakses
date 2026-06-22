@@ -1,6 +1,6 @@
-use crate::hfs::btree::key::HfsPlusCatalogKeyRaw;
+use crate::hfs::btree::key::{HfsCatalogKeyRaw, HfsPlusCatalogKeyRaw};
 use crate::hfs::btree::{BTreeReader, BTreeRecord};
-use crate::hfs::volume_header::HfsPlusForkData;
+use crate::hfs::volume_header::{HfsExtentDescriptor, HfsPlusForkData};
 use crate::util::{read_u16_be, read_u32_be};
 
 #[derive(Debug)]
@@ -321,6 +321,175 @@ mod tests {
             CatalogRecordData::File(f) => assert!(!f.is_compressed()),
             _ => panic!("Expected File"),
         }
+    }
+}
+
+// ── HFS (original) catalog record types ──
+
+#[derive(Debug)]
+pub struct HfsCatalogFolder {
+    pub record_type: u16,
+    pub flags: u16,
+    pub valence: u16,
+    pub folder_id: u32,
+    pub create_date: u32,
+    pub modify_date: u32,
+    pub backup_date: u32,
+}
+
+#[derive(Debug)]
+pub struct HfsCatalogFile {
+    pub record_type: u16,
+    pub flags: u16,
+    pub file_id: u32,
+    pub data_start_block: u32, // flStBlk (in 512-byte blocks, i.e. allocation blocks)
+    pub data_logical_size: u32, // flLogLen
+    pub data_physical_size: u32, // flPyLen
+    pub data_extents: Vec<HfsExtentDescriptor>,
+    pub resource_extents: Vec<HfsExtentDescriptor>,
+}
+
+/// Parse an HFS (original) catalog record value.
+/// All multi-byte fields are big-endian.
+/// Ref: Apple hfs_format.h `HFSCatalogFolder` (62 bytes) and `HFSCatalogFile` (102 bytes).
+pub fn parse_hfs_catalog_record(value: &[u8]) -> anyhow::Result<HfsCatalogRecord> {
+    if value.len() < 4 {
+        anyhow::bail!("HFS catalog record too short");
+    }
+    let record_type = read_u16_be(value);
+    match record_type {
+        0x0100 => {
+            // HFSCatalogFolder: 62 bytes
+            if value.len() < 62 {
+                anyhow::bail!("HFS folder record too short: {}", value.len());
+            }
+            Ok(HfsCatalogRecord::Folder(HfsCatalogFolder {
+                record_type,
+                flags: read_u16_be(&value[2..]),
+                valence: read_u16_be(&value[4..]),
+                folder_id: read_u32_be(&value[6..]),
+                create_date: read_u32_be(&value[10..]),
+                modify_date: read_u32_be(&value[14..]),
+                backup_date: read_u32_be(&value[18..]),
+            }))
+        }
+        0x0200 => {
+            // HFSCatalogFile: 102 bytes
+            // Offsets per Apple hfs_format.h:
+            //  +0 recordType (U16)
+            //  +2 flags (U16)
+            //  +4 userInfo (16 bytes, Finder file info)
+            // +20 fileID (U32)
+            // +24 dataStartBlock (U16, unused/0)
+            // +26 dataLogicalSize (S32)
+            // +30 dataPhysicalSize (S32)
+            // +74 dataExtents (3 * [U16 start, U16 count] = 12 bytes)
+            // +86 rsrcExtents (12 bytes)
+            if value.len() < 102 {
+                anyhow::bail!("HFS file record too short: {}", value.len());
+            }
+            Ok(HfsCatalogRecord::File(HfsCatalogFile {
+                record_type,
+                flags: read_u16_be(&value[2..]),
+                file_id: read_u32_be(&value[20..]),
+                data_start_block: read_u16_be(&value[24..]) as u32,
+                data_logical_size: read_u32_be(&value[26..]),
+                data_physical_size: read_u32_be(&value[30..]),
+                data_extents: parse_hfs_extent_record(&value[74..]),
+                resource_extents: parse_hfs_extent_record(&value[86..]),
+            }))
+        }
+        0x0300 | 0x0400 => Ok(HfsCatalogRecord::Thread),
+        _ => anyhow::bail!("Unknown HFS catalog record type: {:#06x}", record_type),
+    }
+}
+
+fn parse_hfs_extent_record(data: &[u8]) -> Vec<HfsExtentDescriptor> {
+    let mut extents = Vec::new();
+    for i in 0..3 {
+        let off = i * 4;
+        if off + 4 <= data.len() {
+            let start = read_u16_be(&data[off..]);
+            let count = read_u16_be(&data[off + 2..]);
+            if count > 0 {
+                extents.push(HfsExtentDescriptor {
+                    start_block: start,
+                    block_count: count,
+                });
+            }
+        }
+    }
+    extents
+}
+
+#[derive(Debug)]
+pub enum HfsCatalogRecord {
+    Folder(HfsCatalogFolder),
+    File(HfsCatalogFile),
+    Thread,
+}
+
+pub struct HfsCatalogReader<'a> {
+    tree: BTreeReader<'a>,
+}
+
+impl<'a> HfsCatalogReader<'a> {
+    pub fn open(tree: BTreeReader<'a>) -> Self {
+        Self { tree }
+    }
+
+    fn all_records(&self) -> anyhow::Result<Vec<BTreeRecord>> {
+        let leaf_nodes = self.tree.iter_leaf_nodes()?;
+        Ok(leaf_nodes.into_iter().flatten().collect())
+    }
+
+    pub fn list_directory(
+        &self,
+        parent_id: u32,
+    ) -> anyhow::Result<Vec<(String, HfsCatalogRecord)>> {
+        let all_records = self.all_records()?;
+        let mut entries = Vec::new();
+        for rec in &all_records {
+            let key = HfsCatalogKeyRaw {
+                data: rec.key.clone(),
+            };
+            if key.parent_id() != parent_id {
+                continue;
+            }
+            match parse_hfs_catalog_record(&rec.value) {
+                Ok(data) => {
+                    let name = key.node_name();
+                    if !name.is_empty() {
+                        entries.push((name, data));
+                    }
+                }
+                Err(e) => log::debug!("Skipping HFS record: {}", e),
+            }
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(entries)
+    }
+
+    pub fn find_child(
+        &self,
+        parent_id: u32,
+        name: &str,
+    ) -> anyhow::Result<Option<HfsCatalogRecord>> {
+        let all_records = self.all_records()?;
+        for rec in &all_records {
+            let key = HfsCatalogKeyRaw {
+                data: rec.key.clone(),
+            };
+            if key.parent_id() != parent_id {
+                continue;
+            }
+            if key.node_name() == name {
+                if let Ok(data) = parse_hfs_catalog_record(&rec.value) {
+                    return Ok(Some(data));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

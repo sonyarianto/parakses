@@ -9,12 +9,26 @@ pub enum NodeType {
 }
 
 impl NodeType {
+    /// Standard HFS+ mapping:
+    ///   0 = HeaderNode, 1 = IndexNode, 2 = LeafNode, 3 = MapNode
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::HeaderNode),
             1 => Some(Self::IndexNode),
             2 => Some(Self::LeafNode),
             3 => Some(Self::MapNode),
+            _ => None,
+        }
+    }
+
+    /// HFS (original) mapping:
+    ///   0xFF = LeafNode, 0x00 = IndexNode, 0x01 = HeaderNode, 0x02 = MapNode
+    pub fn from_hfs_u8(v: u8) -> Option<Self> {
+        match v {
+            0xFF => Some(Self::LeafNode),
+            0x00 => Some(Self::IndexNode),
+            0x01 => Some(Self::HeaderNode),
+            0x02 => Some(Self::MapNode),
             _ => None,
         }
     }
@@ -31,13 +45,25 @@ pub struct NodeDescriptor {
 
 impl NodeDescriptor {
     pub fn parse(data: &[u8]) -> anyhow::Result<Self> {
+        Self::parse_with_mapping(data, false)
+    }
+
+    pub fn parse_hfs(data: &[u8]) -> anyhow::Result<Self> {
+        Self::parse_with_mapping(data, true)
+    }
+
+    fn parse_with_mapping(data: &[u8], is_hfs_original: bool) -> anyhow::Result<Self> {
         if data.len() < 14 {
             anyhow::bail!("Node descriptor too short");
         }
         let f_link = read_u32_be(data);
         let b_link = read_u32_be(&data[4..]);
-        let kind = NodeType::from_u8(data[8])
-            .ok_or_else(|| anyhow::anyhow!("Invalid node type: {}", data[8]))?;
+        let kind = if is_hfs_original {
+            NodeType::from_hfs_u8(data[8])
+        } else {
+            NodeType::from_u8(data[8])
+        }
+        .ok_or_else(|| anyhow::anyhow!("Invalid node type: {}", data[8]))?;
         let height = data[9];
         let num_records = read_u16_be(&data[10..]);
 
@@ -108,12 +134,14 @@ impl HeaderRecord {
 }
 
 pub fn record_offsets(node_data: &[u8], num_records: u16, node_size: u16) -> Vec<usize> {
+    // Offset table entries are stored from the end of the node downward.
+    // The entry at nodeSize-2 points to record 0 (first record),
+    // nodeSize-4 points to record 1, and so on.
     let mut offsets = Vec::with_capacity(num_records as usize);
-    let off_table_start = node_size as usize - (num_records as usize * 2);
     for i in 0..num_records as usize {
-        let off = off_table_start + i * 2;
-        if off + 2 <= node_data.len() {
-            offsets.push(read_u16_be(&node_data[off..]) as usize);
+        let entry_off = (node_size as usize) - 2 - i * 2;
+        if entry_off + 2 <= node_data.len() {
+            offsets.push(read_u16_be(&node_data[entry_off..]) as usize);
         }
     }
     offsets
@@ -257,11 +285,12 @@ mod tests {
 
     #[test]
     fn test_record_offsets() {
-        // Node with 2 records at offsets 14 and 94
+        // Node with 2 records at offsets 14 and 94.
+        // Offset table: last 2 bytes (510-511) = 14 (record 0),
+        //               second-to-last 2 bytes (508-509) = 94 (record 1).
         let mut node = vec![0u8; 512];
-        let ot_start = 512 - 4; // 2 records * 2 bytes
-        node[ot_start..ot_start + 2].copy_from_slice(&14u16.to_be_bytes());
-        node[ot_start + 2..ot_start + 4].copy_from_slice(&94u16.to_be_bytes());
+        node[510..512].copy_from_slice(&14u16.to_be_bytes());
+        node[508..510].copy_from_slice(&94u16.to_be_bytes());
         let offsets = record_offsets(&node, 2, 512);
         assert_eq!(offsets, vec![14, 94]);
     }

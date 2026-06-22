@@ -13,7 +13,9 @@ use catalog::CatalogReader;
 use extents::ExtentsOverflowReader;
 use fork::ForkReader;
 use unicode::normalize_hfs_name;
-use volume_header::{HfsPlusExtentDescriptor, HfsPlusForkData, VolumeHeader};
+use volume_header::{
+    HfsExtentDescriptor, HfsMdb, HfsPlusExtentDescriptor, HfsPlusForkData, VolumeHeader,
+};
 
 #[derive(Debug)]
 pub struct VolumeInfo {
@@ -26,6 +28,7 @@ pub struct VolumeInfo {
     pub file_count: u32,
     pub folder_count: u32,
     pub is_hfsx: bool,
+    pub is_hfs_original: bool,
     pub is_journaled: bool,
     pub journal_dirty: bool,
     pub write_count: u32,
@@ -38,10 +41,15 @@ pub struct DirEntry {
     pub size: u64,
 }
 
+enum VolumeKind {
+    HfsPlus { header: VolumeHeader },
+    HfsOriginal { mdb: HfsMdb },
+}
+
 pub struct HfsVolume {
     device: Box<dyn BlockDevice>,
     volume_offset: u64,
-    header: VolumeHeader,
+    kind: VolumeKind,
 }
 
 impl HfsVolume {
@@ -60,49 +68,133 @@ impl HfsVolume {
         }
 
         let header_data = &data[sector_off as usize..sector_off as usize + 512];
-        let header = VolumeHeader::parse(header_data)?;
 
+        // Try HFS+ first, fall back to HFS original
+        if let Ok(header) = VolumeHeader::parse(header_data) {
+            return Ok(Self {
+                device,
+                volume_offset,
+                kind: VolumeKind::HfsPlus { header },
+            });
+        }
+
+        let mdb = HfsMdb::parse(header_data)?;
         Ok(Self {
             device,
             volume_offset,
-            header,
+            kind: VolumeKind::HfsOriginal { mdb },
         })
     }
 
-    pub fn header(&self) -> &VolumeHeader {
-        &self.header
-    }
-
-    pub fn volume_info(&self) -> VolumeInfo {
-        let (is_journaled, journal_dirty) = if self.header.is_journaled() {
-            (true, self.check_journal_dirty())
-        } else {
-            (false, false)
-        };
-
-        VolumeInfo {
-            signature: self.header.signature,
-            version: self.header.version,
-            volume_name: self.header.volume_name().to_string(),
-            block_size: self.header.block_size,
-            total_blocks: self.header.total_blocks,
-            free_blocks: self.header.free_blocks,
-            file_count: self.header.file_count,
-            folder_count: self.header.folder_count,
-            is_hfsx: self.header.is_hfsx(),
-            is_journaled,
-            journal_dirty,
-            write_count: self.header.write_count,
+    fn block_size(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.block_size,
+            VolumeKind::HfsOriginal { mdb } => mdb.alloc_block_size,
         }
     }
 
-    /// Read the journal header and determine if the journal is dirty.
-    /// The journal_info_block is the allocation block number of the journal header.
-    /// At offset 0 of that block: uint32_t flags (bit 1 = "in use" = dirty).
+    fn total_blocks(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.total_blocks,
+            VolumeKind::HfsOriginal { mdb } => mdb.num_alloc_blocks as u32,
+        }
+    }
+
+    fn free_blocks(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.free_blocks,
+            VolumeKind::HfsOriginal { mdb } => mdb.free_blocks as u32,
+        }
+    }
+
+    fn file_count(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.file_count,
+            VolumeKind::HfsOriginal { mdb } => mdb.file_count,
+        }
+    }
+
+    fn folder_count(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.folder_count,
+            VolumeKind::HfsOriginal { mdb } => mdb.folder_count,
+        }
+    }
+
+    fn write_count(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.write_count,
+            VolumeKind::HfsOriginal { mdb } => mdb.write_count,
+        }
+    }
+
+    pub fn header(&self) -> Option<&VolumeHeader> {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => Some(header),
+            VolumeKind::HfsOriginal { .. } => None,
+        }
+    }
+
+    pub fn mdb(&self) -> Option<&HfsMdb> {
+        match &self.kind {
+            VolumeKind::HfsPlus { .. } => None,
+            VolumeKind::HfsOriginal { mdb } => Some(mdb),
+        }
+    }
+
+    pub fn volume_info(&self) -> VolumeInfo {
+        let (signature, version, volume_name, is_hfsx, is_journaled, journal_dirty) =
+            match &self.kind {
+                VolumeKind::HfsPlus { header } => {
+                    let (is_j, j_dirty) = if header.is_journaled() {
+                        (true, self.check_journal_dirty())
+                    } else {
+                        (false, false)
+                    };
+                    (
+                        header.signature,
+                        header.version,
+                        header.volume_name().to_string(),
+                        header.is_hfsx(),
+                        is_j,
+                        j_dirty,
+                    )
+                }
+                VolumeKind::HfsOriginal { mdb } => (
+                    mdb.signature,
+                    0,
+                    mdb.volume_name.clone(),
+                    false,
+                    false,
+                    false,
+                ),
+            };
+
+        let is_hfs_original = matches!(&self.kind, VolumeKind::HfsOriginal { .. });
+        VolumeInfo {
+            signature,
+            version,
+            volume_name,
+            block_size: self.block_size(),
+            total_blocks: self.total_blocks(),
+            free_blocks: self.free_blocks(),
+            file_count: self.file_count(),
+            folder_count: self.folder_count(),
+            is_hfsx,
+            is_hfs_original,
+            is_journaled,
+            journal_dirty,
+            write_count: self.write_count(),
+        }
+    }
+
     fn check_journal_dirty(&self) -> bool {
-        let journal_lba = u64::from(self.header.journal_info_block)
-            * u64::from(self.header.block_size)
-            + self.volume_offset;
+        let journal_info_block = match &self.kind {
+            VolumeKind::HfsPlus { header } => header.journal_info_block,
+            VolumeKind::HfsOriginal { .. } => return false,
+        };
+        let journal_lba =
+            u64::from(journal_info_block) * u64::from(self.block_size()) + self.volume_offset;
         let sector_size = u64::from(self.device.as_ref().sector_size());
         let sector = journal_lba / sector_size;
 
@@ -116,7 +208,6 @@ impl HfsVolume {
                         data[offset + 2],
                         data[offset + 3],
                     ]);
-                    // Bit 1 (0x02) = kJournalInUse
                     (flags & 0x02) != 0
                 } else {
                     false
@@ -126,65 +217,225 @@ impl HfsVolume {
         }
     }
 
-    pub fn volume_name(&self) -> &str {
-        self.header.volume_name()
+    pub fn volume_name(&self) -> String {
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => header.volume_name().to_string(),
+            VolumeKind::HfsOriginal { mdb } => mdb.volume_name.clone(),
+        }
     }
 
-    fn fork_reader_from_extent(
-        &self,
-        extent: volume_header::HfsPlusExtentDescriptor,
-    ) -> ForkReader<'_> {
-        let fork_size = u64::from(extent.block_count) * u64::from(self.header.block_size);
+    fn build_fork_from_extent(&self, start_block: u64, block_count: u64) -> ForkReader<'_> {
+        let fork_size = block_count * u64::from(self.block_size());
         let mut reader = ForkReader::new(
             self.device.as_ref(),
             self.volume_offset,
-            self.header.block_size,
+            self.block_size(),
             fork_size,
         );
-        reader.set_extents(vec![extent]);
+        reader.set_extents(vec![HfsPlusExtentDescriptor {
+            start_block: start_block as u32,
+            block_count: block_count as u32,
+        }]);
+        reader
+    }
+
+    fn first_alloc_block(&self) -> u32 {
+        match &self.kind {
+            VolumeKind::HfsPlus { .. } => 0,
+            VolumeKind::HfsOriginal { mdb } => mdb.first_alloc_block as u32,
+        }
+    }
+
+    fn build_fork_from_hfs_extents(
+        &self,
+        extents: &[HfsExtentDescriptor],
+        logical_size: u64,
+    ) -> ForkReader<'_> {
+        let base = self.first_alloc_block();
+        let converted: Vec<HfsPlusExtentDescriptor> = extents
+            .iter()
+            .filter(|e| e.block_count > 0)
+            .map(|e| HfsPlusExtentDescriptor {
+                // HFS extent records store allocation block numbers;
+                // convert to physical block numbers by adding drAlBlSt.
+                start_block: base + e.start_block as u32,
+                block_count: e.block_count as u32,
+            })
+            .collect();
+        let mut reader = ForkReader::new(
+            self.device.as_ref(),
+            self.volume_offset,
+            self.block_size(),
+            logical_size,
+        );
+        reader.set_extents(converted);
         reader
     }
 
     pub fn catalog_fork_reader(&self) -> ForkReader<'_> {
-        self.fork_reader_from_extent(self.header.catalog_file.clone())
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => {
+                let extent = header.catalog_file.clone();
+                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
+            }
+            VolumeKind::HfsOriginal { mdb } => {
+                let extents = &mdb.ct_extents;
+                self.build_fork_from_hfs_extents(extents, mdb.ct_fl_size as u64)
+            }
+        }
     }
 
     pub fn extents_fork_reader(&self) -> ForkReader<'_> {
-        self.fork_reader_from_extent(self.header.extents_file.clone())
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => {
+                let extent = header.extents_file.clone();
+                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
+            }
+            VolumeKind::HfsOriginal { mdb } => {
+                let extents = &mdb.xt_extents;
+                self.build_fork_from_hfs_extents(extents, mdb.xt_fl_size as u64)
+            }
+        }
     }
 
     pub fn attributes_fork_reader(&self) -> ForkReader<'_> {
-        self.fork_reader_from_extent(self.header.attributes_file.clone())
+        match &self.kind {
+            VolumeKind::HfsPlus { header } => {
+                let extent = header.attributes_file.clone();
+                self.build_fork_from_extent(extent.start_block as u64, extent.block_count as u64)
+            }
+            VolumeKind::HfsOriginal { .. } => {
+                // HFS original has no attributes file
+                ForkReader::new(self.device.as_ref(), self.volume_offset, 512, 0)
+            }
+        }
     }
 
     pub fn list_root(&self) -> anyhow::Result<Vec<DirEntry>> {
-        self.list_directory(1)
+        let root_id = match &self.kind {
+            VolumeKind::HfsPlus { .. } => 1,
+            VolumeKind::HfsOriginal { .. } => 2,
+        };
+        self.list_directory(root_id)
     }
 
     pub fn list_directory(&self, parent_id: u32) -> anyhow::Result<Vec<DirEntry>> {
-        let cat_fork = self.catalog_fork_reader();
-        let btree = BTreeReader::open(&cat_fork)?;
-        let reader = CatalogReader::open(btree);
-        let entries = reader.list_directory(parent_id)?;
-        Ok(entries
-            .into_iter()
-            .map(|(name, record)| {
-                let (is_dir, size) = match &record {
-                    catalog::CatalogRecordData::Folder(_) => (true, 0),
-                    catalog::CatalogRecordData::File(f) => (false, f.data_fork.logical_size),
-                    _ => (false, 0),
-                };
-                DirEntry {
-                    name: normalize_hfs_name(&name),
-                    is_directory: is_dir,
-                    size,
-                }
-            })
-            .collect())
+        match &self.kind {
+            VolumeKind::HfsPlus { .. } => {
+                let cat_fork = self.catalog_fork_reader();
+                let btree = BTreeReader::open(&cat_fork)?;
+                let reader = CatalogReader::open(btree);
+                let entries = reader.list_directory(parent_id)?;
+                Ok(entries
+                    .into_iter()
+                    .map(|(name, record)| {
+                        let (is_dir, size) = match &record {
+                            catalog::CatalogRecordData::Folder(_) => (true, 0),
+                            catalog::CatalogRecordData::File(f) => {
+                                (false, f.data_fork.logical_size)
+                            }
+                            _ => (false, 0),
+                        };
+                        DirEntry {
+                            name: normalize_hfs_name(&name),
+                            is_directory: is_dir,
+                            size,
+                        }
+                    })
+                    .collect())
+            }
+            VolumeKind::HfsOriginal { .. } => {
+                let cat_fork = self.catalog_fork_reader();
+                let btree = BTreeReader::open(&cat_fork)?;
+                let reader = catalog::HfsCatalogReader::open(btree);
+                let entries = reader.list_directory(parent_id)?;
+                Ok(entries
+                    .into_iter()
+                    .map(|(name, record)| {
+                        let (is_dir, size) = match &record {
+                            catalog::HfsCatalogRecord::Folder(_) => (true, 0),
+                            catalog::HfsCatalogRecord::File(f) => {
+                                (false, f.data_logical_size as u64)
+                            }
+                            _ => (false, 0),
+                        };
+                        DirEntry {
+                            name,
+                            is_directory: is_dir,
+                            size,
+                        }
+                    })
+                    .collect())
+            }
+        }
     }
 
-    /// Resolve a path like "/dir/subdir/file" and return the catalog record.
     pub fn resolve_path(&self, path: &str) -> anyhow::Result<catalog::CatalogRecordData> {
+        match &self.kind {
+            VolumeKind::HfsPlus { .. } => self.resolve_path_hfs_plus(path),
+            VolumeKind::HfsOriginal { .. } => {
+                let record = self.resolve_path_hfs_original(path)?;
+                // Convert to CatalogRecordData for API compatibility
+                match record {
+                    catalog::HfsCatalogRecord::Folder(f) => {
+                        Ok(catalog::CatalogRecordData::Folder(catalog::CatalogFolder {
+                            record_type: f.record_type,
+                            flags: f.flags,
+                            valence: f.valence as u32,
+                            folder_id: f.folder_id,
+                            create_date: f.create_date,
+                            content_mod_date: f.modify_date,
+                            attribute_mod_date: 0,
+                            access_date: 0,
+                            backup_date: f.backup_date,
+                            text_encoding: 0,
+                            folder_count: 0,
+                        }))
+                    }
+                    catalog::HfsCatalogRecord::File(f) => {
+                        let base = self.first_alloc_block();
+                        let mut df_data = vec![0u8; 80];
+                        df_data[0..8].copy_from_slice(&(f.data_logical_size as u64).to_be_bytes());
+                        df_data[12..16].copy_from_slice(&1u32.to_be_bytes());
+                        // Build extent record from HFS extents
+                        let mut ext_buf = Vec::new();
+                        for ext in &f.data_extents {
+                            if ext.block_count == 0 {
+                                continue;
+                            }
+                            let start = base + ext.start_block as u32;
+                            ext_buf.extend_from_slice(&start.to_be_bytes());
+                            ext_buf.extend_from_slice(&(ext.block_count as u32).to_be_bytes());
+                        }
+                        // Pad to 8 extents (64 bytes)
+                        ext_buf.resize(64, 0u8);
+                        df_data[16..80].copy_from_slice(&ext_buf);
+                        let data_fork = HfsPlusForkData::parse(&df_data);
+
+                        let rf_data = vec![0u8; 80];
+                        let resource_fork = HfsPlusForkData::parse(&rf_data);
+
+                        Ok(catalog::CatalogRecordData::File(catalog::CatalogFile {
+                            record_type: f.record_type,
+                            flags: f.flags,
+                            file_id: f.file_id,
+                            create_date: 0,
+                            content_mod_date: 0,
+                            attribute_mod_date: 0,
+                            access_date: 0,
+                            backup_date: 0,
+                            text_encoding: 0,
+                            data_fork,
+                            resource_fork,
+                        }))
+                    }
+                    _ => anyhow::bail!("Path resolved to a thread record"),
+                }
+            }
+        }
+    }
+
+    fn resolve_path_hfs_plus(&self, path: &str) -> anyhow::Result<catalog::CatalogRecordData> {
         let cat_fork = self.catalog_fork_reader();
         let btree = BTreeReader::open(&cat_fork)?;
         let reader = CatalogReader::open(btree);
@@ -218,7 +469,41 @@ impl HfsVolume {
         anyhow::bail!("Empty path after resolution");
     }
 
-    /// Build the full extent list for a fork, including overflow extents.
+    fn resolve_path_hfs_original(&self, path: &str) -> anyhow::Result<catalog::HfsCatalogRecord> {
+        let cat_fork = self.catalog_fork_reader();
+        let btree = BTreeReader::open(&cat_fork)?;
+        let reader = catalog::HfsCatalogReader::open(btree);
+
+        let clean = path.trim_start_matches('/').trim_end_matches('/');
+        if clean.is_empty() {
+            anyhow::bail!("Path must be an absolute path");
+        }
+
+        // HFS original root folder ID is 2 (kHFSRootFolderID)
+        let mut parent_id = 2u32;
+        let components: Vec<&str> = clean.split('/').collect();
+
+        for (i, component) in components.iter().enumerate() {
+            let is_last = i == components.len() - 1;
+            let child = reader
+                .find_child(parent_id, component)?
+                .ok_or_else(|| anyhow::anyhow!("Path component '{}' not found", component))?;
+
+            if is_last {
+                return Ok(child);
+            }
+
+            match child {
+                catalog::HfsCatalogRecord::Folder(f) => {
+                    parent_id = f.folder_id;
+                }
+                _ => anyhow::bail!("'{}' is not a directory", component),
+            }
+        }
+
+        anyhow::bail!("Empty path after resolution");
+    }
+
     fn build_extents(
         &self,
         fork_data: &HfsPlusForkData,
@@ -243,15 +528,14 @@ impl HfsVolume {
         Ok(extents)
     }
 
-    /// Read a file's data fork content, given its catalog record.
-    /// Automatically decompresses HFS+ compressed files.
     pub fn read_file_data(&self, file_record: &catalog::CatalogFile) -> anyhow::Result<Vec<u8>> {
         let extents = self.build_extents(&file_record.data_fork, file_record.file_id, 0)?;
 
+        let block_size = self.block_size();
         let mut reader = ForkReader::new(
             self.device.as_ref(),
             self.volume_offset,
-            self.header.block_size,
+            block_size,
             file_record.data_fork.logical_size,
         );
         reader.set_extents(extents);
@@ -268,7 +552,6 @@ impl HfsVolume {
         }
     }
 
-    /// Read content of a file identified by absolute HFS+ path.
     pub fn read_file(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let record = self.resolve_path(path)?;
         match record {

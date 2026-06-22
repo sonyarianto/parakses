@@ -44,7 +44,13 @@ fn print_volume_info(hfs: &hfs::HfsVolume) -> anyhow::Result<()> {
     println!("  Version:    {}", info.version);
     println!(
         "  Type:       {}",
-        if info.is_hfsx { "HFSX" } else { "HFS+" }
+        if info.is_hfsx {
+            "HFSX"
+        } else if info.is_hfs_original {
+            "HFS"
+        } else {
+            "HFS+"
+        }
     );
     println!("  Block size: {} bytes", info.block_size);
     println!(
@@ -84,7 +90,7 @@ fn main() -> anyhow::Result<()> {
                 let drive = blockio::filedevice::FileDevice::open(path)?;
                 let vols = volume::windows::WindowsVolumeEnumerator::enumerate_from(&drive)?;
                 if vols.is_empty() {
-                    println!("No HFS+ volumes found in image.");
+                    println!("No HFS volumes found in image.");
                 } else {
                     for (i, vol) in vols.iter().enumerate() {
                         println!("[{}] Image partition set {}", i, i);
@@ -101,7 +107,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 let vols = volume::windows::WindowsVolumeEnumerator::enumerate()?;
                 if vols.is_empty() {
-                    println!("No HFS+ volumes found.");
+                    println!("No HFS volumes found.");
                 } else {
                     for (i, vol) in vols.iter().enumerate() {
                         println!("[{}] PhysicalDrive{}", i, vol.drive_index);

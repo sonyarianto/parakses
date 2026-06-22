@@ -184,6 +184,115 @@ impl VolumeHeader {
     pub fn volume_name(&self) -> &str {
         "Untitled"
     }
+
+    pub fn is_hfs_original(&self) -> bool {
+        self.signature == 0x4242
+    }
+}
+
+/// HFS (original) Master Directory Block — parsed from the first 162 bytes at offset 1024.
+#[derive(Debug)]
+pub struct HfsMdb {
+    pub signature: u16,         // drSigWord — should be 0x4242 (BD)
+    pub num_files_root: u16,    // drNmFls — files in root directory
+    pub vbm_start: u16,         // drVBMSt — first block of VBM
+    pub alloc_ptr: u16,         // drAllocPtr
+    pub num_alloc_blocks: u16,  // drNmAlBlks
+    pub alloc_block_size: u32,  // drAlBlkSiz — always 512 for HFS
+    pub clump_size: u32,        // drClpSiz
+    pub first_alloc_block: u16, // drAlBlSt — first allocation block number
+    pub next_cnid: u32,         // drNxtCNID
+    pub free_blocks: u16,       // drFreeBks
+    pub volume_name: String,    // drVN (pascal string, max 27 bytes)
+    pub write_count: u32,       // drWrCnt
+    pub file_count: u32,        // drFilCnt
+    pub folder_count: u32,      // drDirCnt
+    pub xt_fl_size: u32,        // drXTFlSize — extents B-tree logical size
+    pub ct_fl_size: u32,        // drCTFlSize — catalog B-tree logical size
+    // Extents B-tree first extent record (3 HFSExtentDescriptor: each U16 start, U16 count)
+    pub xt_extents: [HfsExtentDescriptor; 3],
+    // Catalog B-tree first extent record (3 HFSExtentDescriptor)
+    pub ct_extents: [HfsExtentDescriptor; 3],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HfsExtentDescriptor {
+    pub start_block: u16,
+    pub block_count: u16,
+}
+
+impl HfsMdb {
+    pub fn parse(data: &[u8]) -> anyhow::Result<Self> {
+        if data.len() < 162 {
+            anyhow::bail!("MDB too short: {} bytes", data.len());
+        }
+        let signature = read_u16_be(&data[0..]);
+        if signature != 0x4244 {
+            anyhow::bail!("Not an HFS volume (signature: {:#06x})", signature);
+        }
+
+        let num_files_root = read_u16_be(&data[12..]);
+        let vbm_start = read_u16_be(&data[14..]);
+        let alloc_ptr = read_u16_be(&data[16..]);
+        let num_alloc_blocks = read_u16_be(&data[18..]);
+        let alloc_block_size = read_u32_be(&data[20..]);
+        let clump_size = read_u32_be(&data[24..]);
+        let first_alloc_block = read_u16_be(&data[28..]);
+        let next_cnid = read_u32_be(&data[30..]);
+        let free_blocks = read_u16_be(&data[34..]);
+
+        let name_len = data[36] as usize;
+        let name_bytes = if name_len > 27 { 27 } else { name_len };
+        let volume_name = String::from_utf8_lossy(&data[37..37 + name_bytes]).to_string();
+
+        let write_count = read_u32_be(&data[70..]);
+        let file_count = read_u32_be(&data[84..]);
+        let folder_count = read_u32_be(&data[88..]);
+
+        let xt_fl_size = read_u32_be(&data[130..]);
+        let xt_extents = Self::parse_hfs_extent_record(&data[134..]);
+
+        let ct_fl_size = read_u32_be(&data[146..]);
+        let ct_extents = Self::parse_hfs_extent_record(&data[150..]);
+
+        Ok(Self {
+            signature,
+            num_files_root,
+            vbm_start,
+            alloc_ptr,
+            num_alloc_blocks,
+            alloc_block_size,
+            clump_size,
+            first_alloc_block,
+            next_cnid,
+            free_blocks,
+            volume_name,
+            write_count,
+            file_count,
+            folder_count,
+            xt_fl_size,
+            ct_fl_size,
+            xt_extents,
+            ct_extents,
+        })
+    }
+
+    fn parse_hfs_extent_record(data: &[u8]) -> [HfsExtentDescriptor; 3] {
+        let mut extents = [HfsExtentDescriptor {
+            start_block: 0,
+            block_count: 0,
+        }; 3];
+        for i in 0..3 {
+            let off = i * 4;
+            if off + 4 <= data.len() {
+                extents[i] = HfsExtentDescriptor {
+                    start_block: read_u16_be(&data[off..]),
+                    block_count: read_u16_be(&data[off + 2..]),
+                };
+            }
+        }
+        extents
+    }
 }
 
 #[cfg(test)]
