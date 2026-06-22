@@ -43,3 +43,23 @@ unsafe extern "system" {
 - `src/bin/parakses_gui.rs` — all GUI logic, message constants, raw FFI
 - `src/hfs/` — HFS+ and HFS original (0x4244) read support
 - `image_hfs_1.img` — test image with bare HFS original (3 root entries)
+
+## Write Support
+
+Write support is **not recommended** for the current project. See `docs/write-support.md` for the full analysis and design document.
+
+## HFS+ Volume Header: Special File Offsets
+
+Per Apple `hfs_format.h`, the HFS+ volume header stores 5 special files as `HFSPlusForkData` (80 bytes each):
+
+| File | Offset |
+|---|---|
+| `allocationFile` | 112 |
+| `extentsFile` | 192 |
+| `catalogFile` | 272 |
+| `attributesFile` | 352 |
+| `startupFile` | 432 |
+
+## Partition LBA Units
+
+All MBR and GPT partition LBA values are in **512-byte units** per spec. The byte offset for a partition must be `start_lba * 512`, not `start_lba * device.sector_size()`. Use `read_at()` (in `partition.rs`) to read at specific byte offsets regardless of the device's sector size.

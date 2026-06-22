@@ -139,6 +139,31 @@ A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Wi
 - Open Image dialog for loading `.img`/`.dmg`/`.raw`/`.dd` files
 - File dialogs via raw `comdlg32` FFI
 
+### Phase 11 — HFS Original (0x4244) Support ✅
+
+- MDB (Master Directory Block) parser at byte 1024 from volume start
+- Signature 0x4244 (`BD`), HFS original boot block + MDB structure
+- `HfsMdb` struct with all fields: allocation block size, total/free blocks, catalog/extents file extents, dates
+- `HfsExtentDescriptor` (3× `start_block` + `block_count` u16 pairs) for HFS original extent records
+- `HfsCatalogFile` extended with `resource_start_block`, `resource_logical_size`, `resource_physical_size`
+- Catalog B-tree reader: `HfsCatalogReader` + `HfsCatalogRecord` enum with HFS-original-specific formats
+- Extents B-tree: `HfsExtentKey` with 14-byte key (fork_type + file_id + start_block as u16)
+- Volume detection: fallback to HFS original when HFS+ header parse fails at offset 1024
+- HFS→HFSPlusForkData bridge in `resolve_path_hfs_original()` for API compatibility
+
+### Phase 12 — HFS+ Volume Header Format Fix ✅
+
+- Fixed special-file offsets per Apple spec: `HFSPlusForkData` (80 B) at offsets 112/192/272/352/432 instead of `HfsPlusExtentDescriptor` (8 B) at 112/120/128/136/144
+- `VolumeKind::HfsPlus` now uses `Box<VolumeHeader>` to fix clippy `large_enum_variant` warning
+- `build_fork_from_fork_data()` uses all 8 inline extents (not just the first)
+- Real HFS+ volumes now readable
+
+### Phase 13 — Physical Disk Sector Size Fix ✅
+
+- Volume offset changed from `part.start_lba * device.sector_size()` to `part.start_lba * 512` (partition LBAs are always in 512-byte units per MBR/GPT spec)
+- GPT header/entries read at byte offset (`partition_entry_lba * 512`) via new `read_at()` helper instead of device-sector-relative LBA reads
+- Fixes physical disk reads on 4Kn (4096-byte sector) drives
+
 ## CLI Usage
 
 ```
@@ -244,25 +269,37 @@ Win32 API calls in the CLI (`physical.rs`) use direct `unsafe extern "system"` F
 
 ## Bugs Fixed
 
-1. **`gen_test_img.rs` (line 167)** — B-tree header's `root_node`, `first_leaf_node`, `last_leaf_node` were set to `FIRST_ALLOC+3 = 6` (allocation block number), but node numbers in the B-tree header are indices within the fork (0 = header, 1 = leaf). Changed to `1`. This caused `BTreeReader.read_node_at(6)` to compute offset `6*512=3072` which exceeded the 1024-byte fork, returning empty Vec, and error "Node descriptor too short".
+1. **`gen_test_img.rs`** — B-tree header's `root_node`, `first_leaf_node`, `last_leaf_node` were set to `FIRST_ALLOC+3 = 6` (allocation block number), but node numbers in the B-tree header are indices within the fork (0 = header, 1 = leaf). Changed to `1`. This caused `BTreeReader.read_node_at(6)` to compute offset `6*512=3072` which exceeded the 1024-byte fork, returning empty Vec, and error "Node descriptor too short".
 
 2. **`key.rs`** — `HfsPlusCatalogKeyRaw::parent_id()` and `node_name()` assumed `data` included the keyLength field prefix, but `BTreeReader::read_leaf_node` stores `raw[2..key_len]` (without keyLength). Fixed offsets:
    - `parent_id()`: `self.data[2..]` → `self.data[0..4]`
    - `node_name()`: nameLen at `self.data[6..]` → `self.data[4..6]`, name at `self.data[8..]` → `self.data[6..]`
 
+3. **GUI `LVM_*W` constants** — All list-view message constants used ANSI offsets instead of Wide. `LVM_INSERTCOLUMNW` was `LVM_FIRST + 1` (= `LVM_SETBKCOLOR`), fixed to `+97`. Same for `INSERTITEMW` (`+7`→`+77`), `SETITEMTEXTW` (`+66`→`+116`), `GETITEMTEXTW` (`+75`→`+115`).
+
+4. **`IOCTL_DISK_GET_DRIVE_GEOMETRY` struct** — `DiskGeometry::cylinders` field was `u64` but IOCTL expects a 24-byte `DISK_GEOMETRY` structure. The extra 8 bytes before `media_type` caused the sector size to be read from the wrong offset. Fixed by using the correct #[repr(C)] layout.
+
+5. **HFS+ volume header special file offsets** — `VolumeHeader` parsed `catalog_file`, `extents_file` etc. as `HfsPlusExtentDescriptor` (8 B each) at offsets 120/128/136/144. Apple spec places full `HFSPlusForkData` (80 B each) at offsets 192/272/352/432. The parser was reading garbage from the middle of `allocationFile.logicalSize`. This is why real HFS+ volumes failed to read.
+
+6. **Physical disk sector size mismatch** — Volume offset was `part.start_lba * device.sector_size()`, but partition table LBAs are always in 512-byte units per MBR/GPT spec. On drives with 4096-byte sectors (4Kn), the byte offset was wrong by 8×. Also, GPT header reading used `device.read_sector(offset + 1)` which reads at byte `sector_size` instead of byte 512.
+
 ## Current Status
 
-The bare HFS original test image (`image_hfs_1.img`, 5 MB, no partition table) works end-to-end with both CLI and GUI:
+HFS+ and HFS original volumes work end-to-end with both CLI and GUI:
 
 **CLI:**
-- `parakses list 0 --image image_hfs_1.img` → shows 3 root entries: dir1, dir2, file5.txt
-- `parakses cat 0 /file5.txt --image image_hfs_1.img` → outputs file content
-- `parakses extract 0 /file5.txt out.txt --image image_hfs_1.img` → extracts file
+- `parakses volumes` — lists detected HFS+ partitions on physical drives
+- `parakses list 0 / --image image_hfs_1.img` — shows 3 root entries (HFS original)
+- `parakses cat 0 /file5.txt --image image_hfs_1.img` — outputs file content
+- `parakses extract 0 /file5.txt out.txt --image image_hfs_1.img` — extracts file
+- `parakses volumes --image image.img` — detects HFS+ partitions inside a disk image
 
 **GUI:**
-- `cargo run --bin parakses_gui` → launches native Windows window
-- File → Open Image... → select `image_hfs_1.img` → volume appears in combo box
+- `cargo run --bin parakses_gui` (run as Administrator for physical drive access)
+- Physical drives and images appear in the combo box
 - Double-click to browse, Extract to save files
+- Resource fork preservation via Apple Double (`._`) companion files
+- Keyboard shortcuts: Ctrl+O (Open Image), Ctrl+E (Extract), ↑ (Go Up)
 
 ## Testing Strategy
 
@@ -272,15 +309,15 @@ The bare HFS original test image (`image_hfs_1.img`, 5 MB, no partition table) w
 
 ## Next Steps
 
-1. Write unit tests for parsing functions
-2. Test the GUI against a real HFS+ USB disk on Windows 11
-3. Consider resource fork extraction
-4. Add keyboard shortcuts to GUI (Ctrl+O for open image, Ctrl+E for extract)
+1. ~~Write unit tests for parsing functions~~ ✅
+2. ~~Test the GUI against a real HFS+ USB disk on Windows 11~~ ✅ (volume header + sector size bugs fixed)
+3. ~~Consider resource fork extraction~~ ✅ (Apple Double implementation)
+4. ~~Add keyboard shortcuts to GUI (Ctrl+O for open image, Ctrl+E for extract)~~ ✅
+5. **Write support**: see [docs/write-support.md](write-support.md) for detailed analysis. Current recommendation: **not worth pursuing** unless sponsored.
 
 ## Out of Scope
 
-- Writing / modifying HFS+ volumes
+- Writing / modifying HFS+ volumes (see [write-support.md](write-support.md) for analysis)
 - Journal replay
-- HFS Standard (Classic Mac OS, pre–Mac OS 8.1)
 - Apple File System (APFS)
-- Resource fork extraction as AppleDouble
+- Apple Partition Map (APM) — Mac-formatted disks without MBR/GPT
