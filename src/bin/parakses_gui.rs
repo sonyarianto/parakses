@@ -1099,7 +1099,7 @@ fn main() {
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(WS_EX_WINDOWEDGE),
             w!("parakses_gui"),
-            w!("parakses - HFS+ Browser"),
+            w!("Parakses - HFS+ Browser"),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,

@@ -252,23 +252,22 @@ Win32 API calls in the CLI (`physical.rs`) use direct `unsafe extern "system"` F
 
 ## Current Status
 
-The synthetic test image (`test_hfs.img`, 128 KB, MBR + HFS+) works end-to-end with both CLI and GUI:
+The bare HFS original test image (`image_hfs_1.img`, 5 MB, no partition table) works end-to-end with both CLI and GUI:
 
 **CLI:**
-- `parakses volumes --image test_hfs.img` → lists partition
-- `parakses list 0 / --image test_hfs.img` → shows hello.txt (29 bytes)
-- `parakses cat 0 /hello.txt --image test_hfs.img` → outputs "Hello from test HFS+ volume!"
-- `parakses extract 0 /hello.txt out.txt --image test_hfs.img` → extracts 29 bytes
+- `parakses list 0 --image image_hfs_1.img` → shows 3 root entries: dir1, dir2, file5.txt
+- `parakses cat 0 /file5.txt --image image_hfs_1.img` → outputs file content
+- `parakses extract 0 /file5.txt out.txt --image image_hfs_1.img` → extracts file
 
 **GUI:**
 - `cargo run --bin parakses_gui` → launches native Windows window
-- File → Open Image... → select `test_hfs.img` → volume appears in combo box
+- File → Open Image... → select `image_hfs_1.img` → volume appears in combo box
 - Double-click to browse, Extract to save files
 
 ## Testing Strategy
 
-1. **Unit tests** — Not yet written; all parsing lives in pure functions ready for `#[cfg(test)]`
-2. **Integration tests** — `MemFile`-based synthetic test image (`test_hfs.img`) passes end-to-end (volumes, list, cat, extract)
+1. **Unit tests** — 110 unit tests covering catalog parsing, B-tree nodes, fork reads, compression, and volume headers
+2. **Integration tests** — `image_hfs_1.img` (bare HFS original) passes end-to-end (list, cat, extract)
 3. **Manual acceptance** — Real USB disk on Windows 11
 
 ## Next Steps

@@ -42,4 +42,4 @@ unsafe extern "system" {
 
 - `src/bin/parakses_gui.rs` — all GUI logic, message constants, raw FFI
 - `src/hfs/` — HFS+ and HFS original (0x4244) read support
-- `disk_Apple_5MB.img` — test image with bare HFS original (3 root entries)
+- `image_hfs_1.img` — test image with bare HFS original (3 root entries)

@@ -1,17 +1,17 @@
 # parakses
 
-A native Rust tool to read **HFS+ (Mac OS Extended)** volumes on Windows 11 — with both a **CLI** and a **GUI**.
+A native Rust tool to read **HFS+ (Mac OS Extended)** and **HFS (Mac OS Standard)** volumes on Windows 11 — with both a **CLI** and a **GUI**.
 
-Plug in an HFS+-formatted USB drive or open a raw disk image and browse/extract files — no Mac needed.
+Plug in an HFS/HFS+-formatted USB drive or open a raw disk image and browse/extract files — no Mac needed.
 
 ## Features
 
-- List available HFS+ volumes on physical drives or raw disk images
+- List available HFS+ and HFS (0x4244) volumes on physical drives or raw disk images
 - Browse directory contents with `list` / `ls` (CLI) or point-and-click (GUI)
 - Print file contents to stdout with `cat`
 - Extract files to the Windows filesystem with `extract` / `cp` / `export`
 - Native Windows GUI with list view, combo box, status bar, and menus
-- Supports MBR and GPT partition tables
+- Supports MBR and GPT partition tables, plus bare HFS volumes (no partition table)
 - HFS+ compression (zlib) decompression
 - Unicode normalization (NFD → NFC)
 - HFSX case-sensitive volumes
@@ -155,6 +155,7 @@ parakses --image multi.img --partition 1 list 0 /
 - **Run as Administrator** — physical drive access requires elevation. Without it, you'll get "access denied" errors. If you're using `--image`, admin is not required.
 - **Volume index** — the number shown by `volumes` (e.g. `[0]`) is used as the first argument to `list`, `cat`, `extract`.
 - **Paths** use forward slashes (`/`) and are absolute within the HFS+ volume.
+- **HFS original (0x4244)** volumes are supported — bare images without a partition table are detected by the `MDB` signature.
 - **Journaled volumes** are detected and their dirty/clean status is shown. A dirty journal means the volume may be in an inconsistent state.
 - **HFS+ compressed files** (`.dmg` style zlib compression) are decompressed transparently on extraction.
 - **Unicode filenames** are normalized from NFD (HFS+ decomposed form) to NFC for display.
@@ -170,8 +171,8 @@ parakses --image multi.img --partition 1 list 0 /
 │              Library (lib.rs)            │
 │    Shared HFS+ logic used by both CLIs   │
 ├──────────────────────────────────────────┤
-│          HFS+ Parser (pure Rust)         │
-│  Volume Header | Catalog B-tree          │
+│   HFS+ / HFS Parser (pure Rust)          │
+│  Volume Header / MDB | Catalog B-tree    │
 │  Extents B-tree | Fork Reader            │
 │  Compression (zlib) | Unicode            │
 ├──────────────────────────────────────────┤
@@ -195,14 +196,14 @@ src/
 ├── error.rs              # Custom error types
 ├── volume/               # Volume discovery (MBR, GPT, Windows enumeration)
 ├── blockio/              # Block device abstraction (physical drive, file, memory)
-├── hfs/                  # HFS+ filesystem parser
+├── hfs/                  # HFS+ / HFS filesystem parser
 │   ├── btree/            # B-tree engine (generic, used by catalog + extents)
-│   ├── catalog.rs        # Directory listing and path resolution
+│   ├── catalog.rs        # Directory listing and path resolution (HFS+ & HFS)
 │   ├── extents.rs        # Extent overflow lookups
 │   ├── fork.rs           # Allocation block → sector reads
 │   ├── compression.rs    # HFS+ cmpf decompression
 │   ├── unicode.rs        # UTF-16BE decoding, NFD→NFC normalization
-│   ├── volume_header.rs  # Volume header parsing
+│   ├── volume_header.rs  # Volume header / MDB parsing (HFS+ & HFS)
 │   └── attribute.rs      # Attributes reader (stub)
 └── util/                 # Big-endian helpers, date conversion
 ```
