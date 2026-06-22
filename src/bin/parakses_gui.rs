@@ -24,9 +24,12 @@ const IDC_PATH_TEXT: u32 = 102;
 const IDC_STATUS_BAR: u32 = 103;
 const IDC_GO_UP: u32 = 104;
 const IDC_EXTRACT: u32 = 105;
+const IDC_PROGRESS: u32 = 106;
 const IDM_OPEN_IMAGE: u32 = 200;
 const IDM_EXIT: u32 = 201;
 const IDM_ABOUT: u32 = 300;
+const POPUP_EXTRACT: u32 = 400;
+const POPUP_OPEN: u32 = 401;
 
 const LVM_FIRST: u32 = 0x1000;
 const LVM_INSERTCOLUMNW: u32 = LVM_FIRST + 97;
@@ -54,6 +57,9 @@ const CB_ERR: isize = -1;
 const BN_CLICKED: u32 = 0;
 const CBN_SELCHANGE: u32 = 1;
 const SB_SETTEXT: u32 = 0x0400 + 1;
+const PBS_MARQUEE: u32 = 0x08;
+const PBM_SETMARQUEE: u32 = 0x0400 + 10;
+const WM_CONTEXTMENU: u32 = 0x007B;
 const VK_UP: u16 = 0x26;
 const LVS_REPORT: u32 = 0x0001;
 const LVS_SINGLESEL: u32 = 0x0004;
@@ -153,6 +159,7 @@ struct GuiState {
     hwnd_up: HWND,
     hwnd_extract: HWND,
     hwnd_status: HWND,
+    hwnd_progress: HWND,
 }
 
 static mut APP_HINSTANCE: Option<HINSTANCE> = None;
@@ -717,17 +724,73 @@ fn on_extract(state: &mut GuiState) {
 
     let dst = from_wide_lossy(&out_buf);
     let dst_path = Path::new(&dst);
+
+    // Show progress bar
+    set_progress_visible(state, true);
+    set_status(state, &format!("Extracting '{}'...", name));
+
     match hfs.extract_file(&file_path, dst_path) {
         Ok(size) => {
             let msg = format!("Extracted {} bytes to '{}'", size, dst);
+            set_progress_visible(state, false);
+            set_status(state, &msg);
             let w = to_wide(&msg);
             unsafe {
                 let _ = MessageBoxW(state.hwnd, PCWSTR(w.as_ptr()), w!("Extract"), MB_OK);
             }
         }
         Err(e) => {
+            set_progress_visible(state, false);
+            set_status(state, "Extract failed");
             show_error(state.hwnd, &format!("Extract failed: {}", e));
         }
+    }
+}
+
+fn on_list_context_menu(state: &mut GuiState) {
+    let hwnd_list = state.hwnd_list;
+    let name = match get_selected_item_name(hwnd_list) {
+        Some(n) => n,
+        None => return,
+    };
+    if name == ".." {
+        return;
+    }
+
+    let hmenu = unsafe { CreatePopupMenu().unwrap() };
+    unsafe {
+        let _ = AppendMenuW(
+            hmenu,
+            MENU_ITEM_FLAGS(0),
+            POPUP_EXTRACT as usize,
+            w!("Extract"),
+        );
+        let _ = AppendMenuW(hmenu, MENU_ITEM_FLAGS(0), POPUP_OPEN as usize, w!("Open"));
+    }
+
+    let pt = unsafe {
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        pt
+    };
+
+    let cmd = unsafe { TrackPopupMenu(hmenu, TPM_RETURNCMD, pt.x, pt.y, 0, state.hwnd, None) };
+
+    unsafe {
+        let _ = DestroyMenu(hmenu);
+    }
+
+    let cmd_id = cmd.0 as u32;
+    if cmd_id == POPUP_EXTRACT {
+        on_extract(state);
+    } else if cmd_id == POPUP_OPEN {
+        on_list_double_click(state);
+    }
+}
+
+fn set_progress_visible(state: &GuiState, visible: bool) {
+    unsafe {
+        let _ = ShowWindow(state.hwnd_progress, if visible { SW_SHOW } else { SW_HIDE });
     }
 }
 
@@ -855,13 +918,24 @@ unsafe extern "system" fn wnd_proc(
                 SET_WINDOW_POS_FLAGS(0x0004),
             );
             let list_top = cy + pad * 2;
+            let progress_h = 20i32;
+            let list_bottom = h - progress_h - pad - 20;
             let _ = SetWindowPos(
                 state.hwnd_list,
                 HWND(ptr::null_mut()),
                 pad,
                 list_top,
                 w - pad * 2,
-                h - list_top - pad - 20,
+                list_bottom - list_top,
+                SET_WINDOW_POS_FLAGS(0x0004),
+            );
+            let _ = SetWindowPos(
+                state.hwnd_progress,
+                HWND(ptr::null_mut()),
+                pad,
+                list_bottom,
+                w - pad * 2,
+                progress_h,
                 SET_WINDOW_POS_FLAGS(0x0004),
             );
             let _ = SendMessageW(state.hwnd_status, SB_SETTEXT, WPARAM(0), LPARAM(0));
@@ -887,6 +961,13 @@ unsafe extern "system" fn wnd_proc(
             let nmhdr = &*(lparam.0 as *const NMHDR);
             if nmhdr.hwndFrom == state.hwnd_list && nmhdr.code == NM_DBLCLK {
                 on_list_double_click(state);
+            }
+            LRESULT(0)
+        }
+        WM_CONTEXTMENU => {
+            let hwnd = HWND(wparam.0 as *mut std::ffi::c_void);
+            if hwnd == state.hwnd_list {
+                on_list_context_menu(state);
             }
             LRESULT(0)
         }
@@ -1023,6 +1104,23 @@ fn create_gui(hwnd: HWND) -> GuiState {
         )
         .unwrap();
 
+        let hwnd_progress = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("msctls_progress32"),
+            w!(""),
+            WINDOW_STYLE(WS_CHILD | PBS_MARQUEE),
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            HMENU(IDC_PROGRESS as *mut _),
+            hinst,
+            None,
+        )
+        .unwrap();
+        let _ = SendMessageW(hwnd_progress, PBM_SETMARQUEE, WPARAM(1), LPARAM(0));
+
         let hmenu = CreateMenu().unwrap();
         let hsub = CreatePopupMenu().unwrap();
         let open_text = to_wide("Open Image...\tCtrl+O");
@@ -1070,6 +1168,7 @@ fn create_gui(hwnd: HWND) -> GuiState {
             hwnd_up,
             hwnd_extract,
             hwnd_status,
+            hwnd_progress,
         }
     }
 }
