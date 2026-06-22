@@ -138,6 +138,9 @@ A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Wi
 - Extract button with Save File dialog for exporting files
 - Open Image dialog for loading `.img`/`.dmg`/`.raw`/`.dd` files
 - File dialogs via raw `comdlg32` FFI
+- **Context menu** — right-click on list view shows Extract/Open popup
+- **Progress bar** — marquee-style progress bar shown during extraction with status bar feedback
+- **Keyboard shortcuts**: Ctrl+O (Open Image), Ctrl+E (Extract), ↑ (Go Up)
 
 ### Phase 11 — HFS Original (0x4244) Support ✅
 
@@ -163,6 +166,15 @@ A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Wi
 - Volume offset changed from `part.start_lba * device.sector_size()` to `part.start_lba * 512` (partition LBAs are always in 512-byte units per MBR/GPT spec)
 - GPT header/entries read at byte offset (`partition_entry_lba * 512`) via new `read_at()` helper instead of device-sector-relative LBA reads
 - Fixes physical disk reads on 4Kn (4096-byte sector) drives
+
+### Phase 14 — Apple Partition Map (APM) Support ✅
+
+- `PartitionTable::Apm` variant with `ApmEntry` struct (start_lba, sector_count, name, partition_type, logical_start, logical_count)
+- `parse_apm()` reads entries starting at block 1 (byte 512), validates PM signature (0x504D), uses `PMMapBlkCnt` for iteration
+- HFS type detection via `is_hfs_apm()` matching `"Apple_HFS"` and `"Apple_HFSX"` type strings
+- `find_hfs_partitions()` uses `logical_start`/`logical_count` for APM partition offsets
+- Detection falls through to APM when no MBR signature found, or when MBR entries are empty
+- 4 unit tests for APM parsing and type detection
 
 ## CLI Usage
 
@@ -296,15 +308,16 @@ HFS+ and HFS original volumes work end-to-end with both CLI and GUI:
 
 **GUI:**
 - `cargo run --bin parakses_gui` (run as Administrator for physical drive access)
-- Physical drives and images appear in the combo box
-- Double-click to browse, Extract to save files
+- Physical drives, APM-formatted drives, and images appear in the combo box
+- Double-click to browse, right-click context menu for Extract/Open
+- Progress bar and status bar feedback during extraction
 - Resource fork preservation via Apple Double (`._`) companion files
 - Keyboard shortcuts: Ctrl+O (Open Image), Ctrl+E (Extract), ↑ (Go Up)
 
 ## Testing Strategy
 
-1. **Unit tests** — 110 unit tests covering catalog parsing, B-tree nodes, fork reads, compression, and volume headers
-2. **Integration tests** — `image_hfs_1.img` (bare HFS original) passes end-to-end (list, cat, extract)
+1. **Unit tests** — 119 unit tests covering catalog parsing, B-tree nodes, fork reads, compression, volume headers, partition tables (MBR/GPT/APM), and integration (HFS+ image)
+2. **Integration tests** — `image_hfs_1.img` (bare HFS original) and `image_hfs_plus.img` (HFS+ with MBR) pass end-to-end (list, cat, extract)
 3. **Manual acceptance** — Real USB disk on Windows 11
 
 ## Next Steps
@@ -313,11 +326,12 @@ HFS+ and HFS original volumes work end-to-end with both CLI and GUI:
 2. ~~Test the GUI against a real HFS+ USB disk on Windows 11~~ ✅ (volume header + sector size bugs fixed)
 3. ~~Consider resource fork extraction~~ ✅ (Apple Double implementation)
 4. ~~Add keyboard shortcuts to GUI (Ctrl+O for open image, Ctrl+E for extract)~~ ✅
-5. **Write support**: see [docs/write-support.md](write-support.md) for detailed analysis. Current recommendation: **not worth pursuing** unless sponsored.
+5. ~~GUI polish: context menu, progress bar, status feedback~~ ✅
+6. ~~Apple Partition Map (APM) support~~ ✅
+7. **Write support**: see [docs/write-support.md](write-support.md) for detailed analysis. Current recommendation: **not worth pursuing** unless sponsored.
 
 ## Out of Scope
 
 - Writing / modifying HFS+ volumes (see [write-support.md](write-support.md) for analysis)
 - Journal replay
 - Apple File System (APFS)
-- Apple Partition Map (APM) — Mac-formatted disks without MBR/GPT

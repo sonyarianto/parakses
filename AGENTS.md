@@ -43,6 +43,14 @@ unsafe extern "system" {
 - `src/bin/parakses_gui.rs` — all GUI logic, message constants, raw FFI
 - `src/hfs/` — HFS+ and HFS original (0x4244) read support
 - `image_hfs_1.img` — test image with bare HFS original (3 root entries)
+- `image_hfs_plus.img` — HFS+ test image with MBR (hello.txt, 1 file)
+- `src/volume/partition.rs` — MBR, GPT, and APM partition table parsing
+
+## APM Detection
+
+APM (Apple Partition Map) is detected by reading block 1 (byte 512) and checking for `0x504D` ("PM") signature. The first entry's `PMMapBlkCnt` field determines the number of map entries. Entries with type `"Apple_HFS"` or `"Apple_HFSX"` are treated as HFS+ volumes. All LBA values are in 512-byte units.
+
+Detection priority in `detect_partition_table()`: MBR → GPT (if protective MBR) → APM (if no MBR) or MBR → APM (if MBR entries empty).
 
 ## Write Support
 
