@@ -11,7 +11,7 @@ Plug in an HFS/HFS+-formatted USB drive or open a raw disk image and browse/extr
 - Print file contents to stdout with `cat`
 - Extract files to the Windows filesystem with `extract` / `cp` / `export`
 - Native Windows GUI with list view, combo box, status bar, and menus
-- Supports MBR and GPT partition tables, plus bare HFS volumes (no partition table)
+- Supports **MBR**, **GPT**, and **Apple Partition Map (APM)** partition tables, plus bare HFS volumes (no partition table)
 - HFS+ compression (zlib) decompression
 - Unicode normalization (NFD → NFC)
 - HFSX case-sensitive volumes
@@ -56,10 +56,12 @@ The GUI window shows:
 
 1. **Select a volume** from the drop-down — the root directory is listed automatically
 2. **Double-click a folder** to navigate into it
-3. **Click Up** to go to the parent directory
-4. **Select a file and click Extract** — a Save dialog appears; pick a destination
-5. **File → Open Image...** to load a raw disk image (`.img`, `.dmg`, `.raw`, `.dd`)
-6. **Help → About parakses** for version info
+3. **Right-click** any item for a context menu with Extract / Open
+4. **Click Up** to go to the parent directory
+5. **Select a file and click Extract** — a progress bar appears, then a Save dialog; pick a destination
+6. **File → Open Image...** to load a raw disk image (`.img`, `.dmg`, `.raw`, `.dd`)
+7. **Keyboard shortcuts:** `Ctrl+O` (Open Image), `Ctrl+E` (Extract selected), `↑` (Go Up)
+8. **Help → About parakses** for version info
 
 ## CLI Usage
 
@@ -180,7 +182,7 @@ parakses --image multi.img --partition 1 list 0 /
 │  (Win32 FFI: CreateFile on PhysicalDrive)│
 ├──────────────────────────────────────────┤
 │      Windows Volume Discovery            │
-│  (MBR + GPT partition table parsing)     │
+│  (MBR + GPT + APM partition parsing)    │
 └──────────────────────────────────────────┘
 ```
 
