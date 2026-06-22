@@ -346,6 +346,9 @@ pub struct HfsCatalogFile {
     pub data_logical_size: u32, // flLogLen
     pub data_physical_size: u32, // flPyLen
     pub data_extents: Vec<HfsExtentDescriptor>,
+    pub resource_start_block: u32,
+    pub resource_logical_size: u32,
+    pub resource_physical_size: u32,
     pub resource_extents: Vec<HfsExtentDescriptor>,
 }
 
@@ -383,6 +386,9 @@ pub fn parse_hfs_catalog_record(value: &[u8]) -> anyhow::Result<HfsCatalogRecord
             // +24 dataStartBlock (U16, unused/0)
             // +26 dataLogicalSize (S32)
             // +30 dataPhysicalSize (S32)
+            // +34 rsrcStartBlock (U16)
+            // +36 rsrcLogicalSize (S32)
+            // +40 rsrcPhysicalSize (S32)
             // +74 dataExtents (3 * [U16 start, U16 count] = 12 bytes)
             // +86 rsrcExtents (12 bytes)
             if value.len() < 102 {
@@ -395,6 +401,9 @@ pub fn parse_hfs_catalog_record(value: &[u8]) -> anyhow::Result<HfsCatalogRecord
                 data_start_block: read_u16_be(&value[24..]) as u32,
                 data_logical_size: read_u32_be(&value[26..]),
                 data_physical_size: read_u32_be(&value[30..]),
+                resource_start_block: read_u16_be(&value[34..]) as u32,
+                resource_logical_size: read_u32_be(&value[36..]),
+                resource_physical_size: read_u32_be(&value[40..]),
                 data_extents: parse_hfs_extent_record(&value[74..]),
                 resource_extents: parse_hfs_extent_record(&value[86..]),
             }))

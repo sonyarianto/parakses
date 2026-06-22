@@ -412,7 +412,21 @@ impl HfsVolume {
                         df_data[16..80].copy_from_slice(&ext_buf);
                         let data_fork = HfsPlusForkData::parse(&df_data);
 
-                        let rf_data = vec![0u8; 80];
+                        let mut rf_data = vec![0u8; 80];
+                        rf_data[0..8]
+                            .copy_from_slice(&(f.resource_logical_size as u64).to_be_bytes());
+                        rf_data[12..16].copy_from_slice(&1u32.to_be_bytes());
+                        let mut rf_ext_buf = Vec::new();
+                        for ext in &f.resource_extents {
+                            if ext.block_count == 0 {
+                                continue;
+                            }
+                            let start = base + ext.start_block as u32;
+                            rf_ext_buf.extend_from_slice(&start.to_be_bytes());
+                            rf_ext_buf.extend_from_slice(&(ext.block_count as u32).to_be_bytes());
+                        }
+                        rf_ext_buf.resize(64, 0u8);
+                        rf_data[16..80].copy_from_slice(&rf_ext_buf);
                         let resource_fork = HfsPlusForkData::parse(&rf_data);
 
                         Ok(catalog::CatalogRecordData::File(catalog::CatalogFile {
@@ -560,10 +574,71 @@ impl HfsVolume {
         }
     }
 
+    pub fn read_resource_data(
+        &self,
+        file_record: &catalog::CatalogFile,
+    ) -> anyhow::Result<Vec<u8>> {
+        if file_record.resource_fork.logical_size == 0 {
+            return Ok(Vec::new());
+        }
+        let extents = self.build_extents(&file_record.resource_fork, file_record.file_id, 1)?;
+        let block_size = self.block_size();
+        let mut reader = ForkReader::new(
+            self.device.as_ref(),
+            self.volume_offset,
+            block_size,
+            file_record.resource_fork.logical_size,
+        );
+        reader.set_extents(extents);
+        reader.read_all()
+    }
+
+    pub fn read_resource_fork(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+        let record = self.resolve_path(path)?;
+        match record {
+            catalog::CatalogRecordData::File(f) => self.read_resource_data(&f),
+            _ => anyhow::bail!("'{}' is not a file", path),
+        }
+    }
+
     pub fn extract_file(&self, src: &str, dst: &std::path::Path) -> anyhow::Result<u64> {
-        let data = self.read_file(src)?;
+        let record = self.resolve_path(src)?;
+        let f = match record {
+            catalog::CatalogRecordData::File(f) => f,
+            _ => anyhow::bail!("'{}' is not a file", src),
+        };
+        let data = self.read_file_data(&f)?;
         let len = data.len() as u64;
         std::fs::write(dst, &data)?;
+
+        let rsrc = self.read_resource_data(&f)?;
+        if !rsrc.is_empty() {
+            let apple_double = encode_apple_double(&rsrc);
+            let mut meta_path = dst.to_path_buf();
+            if let Some(file_name) = meta_path.file_name().map(|n| n.to_os_string()) {
+                let mut meta_name = std::ffi::OsString::from("._");
+                meta_name.push(&file_name);
+                meta_path.set_file_name(meta_name);
+                std::fs::write(&meta_path, &apple_double)?;
+            }
+        }
+
         Ok(len)
     }
+}
+
+fn encode_apple_double(resource_fork: &[u8]) -> Vec<u8> {
+    let header_size = 26u32;
+    let entry_size = 12u32;
+    let total_header = header_size + entry_size;
+    let mut buf = Vec::with_capacity(total_header as usize + resource_fork.len());
+    buf.extend_from_slice(&0x00051607u32.to_be_bytes()); // magic
+    buf.extend_from_slice(&0x00020000u32.to_be_bytes()); // version
+    buf.extend_from_slice(&[0u8; 16]); // filler
+    buf.extend_from_slice(&[0, 1]); // number of entries (big-endian u16)
+    buf.extend_from_slice(&[0, 2]); // entry ID: ResourceFork (big-endian u16)
+    buf.extend_from_slice(&total_header.to_be_bytes()); // offset to data
+    buf.extend_from_slice(&(resource_fork.len() as u32).to_be_bytes()); // length
+    buf.extend_from_slice(resource_fork);
+    buf
 }
