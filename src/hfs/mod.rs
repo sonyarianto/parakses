@@ -639,3 +639,70 @@ fn encode_apple_double(resource_fork: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(resource_fork);
     buf
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use super::HfsVolume;
+    use crate::blockio::memfile::MemFile;
+
+    const HFS_PLUS_IMG: &[u8] = include_bytes!("../../image_hfs_plus.img");
+
+    fn make_device() -> MemFile {
+        MemFile::new(HFS_PLUS_IMG.to_vec(), 512)
+    }
+
+    #[test]
+    fn test_hfs_plus_open() {
+        let device = make_device();
+        let vol = HfsVolume::open(Box::new(device), 512).unwrap();
+        let info = vol.volume_info();
+        assert_eq!(info.signature, 0x482B);
+        assert_eq!(info.version, 4);
+        assert_eq!(info.block_size, 512);
+        assert_eq!(info.total_blocks, 128);
+        assert_eq!(info.file_count, 1);
+        assert_eq!(info.folder_count, 1);
+        assert_eq!(info.volume_name, "Untitled");
+    }
+
+    #[test]
+    fn test_hfs_plus_list_root() {
+        let device = make_device();
+        let vol = HfsVolume::open(Box::new(device), 512).unwrap();
+        let entries = vol.list_root().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "hello.txt");
+        assert!(!entries[0].is_directory);
+        assert_eq!(entries[0].size, 29);
+    }
+
+    #[test]
+    fn test_hfs_plus_read_file() {
+        let device = make_device();
+        let vol = HfsVolume::open(Box::new(device), 512).unwrap();
+        let data = vol.read_file("/hello.txt").unwrap();
+        assert_eq!(data, b"Hello from test HFS+ volume!\n");
+    }
+
+    #[test]
+    fn test_hfs_plus_extract_file() {
+        let device = make_device();
+        let vol = HfsVolume::open(Box::new(device), 512).unwrap();
+        let data = vol.read_file("/hello.txt").unwrap();
+        assert_eq!(data.len(), 29);
+        assert!(data.starts_with(b"Hello"));
+    }
+
+    #[test]
+    fn test_hfs_plus_resolve_path() {
+        let device = make_device();
+        let vol = HfsVolume::open(Box::new(device), 512).unwrap();
+        let record = vol.resolve_path("/hello.txt").unwrap();
+        match record {
+            crate::hfs::catalog::CatalogRecordData::File(f) => {
+                assert_eq!(f.data_fork.logical_size, 29);
+            }
+            _ => panic!("Expected file record"),
+        }
+    }
+}
