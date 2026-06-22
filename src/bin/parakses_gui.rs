@@ -54,6 +54,7 @@ const CB_ERR: isize = -1;
 const BN_CLICKED: u32 = 0;
 const CBN_SELCHANGE: u32 = 1;
 const SB_SETTEXT: u32 = 0x0400 + 1;
+const VK_UP: u16 = 0x26;
 const LVS_REPORT: u32 = 0x0001;
 const LVS_SINGLESEL: u32 = 0x0004;
 const LVS_SHOWSELALWAYS: u32 = 0x0008;
@@ -1026,11 +1027,12 @@ fn create_gui(hwnd: HWND) -> GuiState {
 
         let hmenu = CreateMenu().unwrap();
         let hsub = CreatePopupMenu().unwrap();
+        let open_text = to_wide("Open Image...\tCtrl+O");
         let _ = AppendMenuW(
             hsub,
             MENU_ITEM_FLAGS(0),
             IDM_OPEN_IMAGE as usize,
-            w!("Open Image..."),
+            PCWSTR(open_text.as_ptr()),
         );
         let _ = AppendMenuW(hsub, MENU_ITEM_FLAGS(0x0800), 0, PCWSTR(ptr::null()));
         let _ = AppendMenuW(hsub, MENU_ITEM_FLAGS(0), IDM_EXIT as usize, w!("Exit"));
@@ -1042,11 +1044,12 @@ fn create_gui(hwnd: HWND) -> GuiState {
         );
 
         let habout = CreatePopupMenu().unwrap();
+        let about_text = to_wide("About parakses");
         let _ = AppendMenuW(
             habout,
             MENU_ITEM_FLAGS(0),
             IDM_ABOUT as usize,
-            w!("About parakses"),
+            PCWSTR(about_text.as_ptr()),
         );
         let _ = AppendMenuW(
             hmenu,
@@ -1114,10 +1117,31 @@ fn main() {
         let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
         let _ = UpdateWindow(hwnd);
 
+        let accel = [
+            ACCEL {
+                fVirt: FCONTROL | FVIRTKEY,
+                key: 'O' as u16,
+                cmd: IDM_OPEN_IMAGE as u16,
+            },
+            ACCEL {
+                fVirt: FCONTROL | FVIRTKEY,
+                key: 'E' as u16,
+                cmd: IDC_EXTRACT as u16,
+            },
+            ACCEL {
+                fVirt: FVIRTKEY,
+                key: VK_UP,
+                cmd: IDC_GO_UP as u16,
+            },
+        ];
+        let haccel = CreateAcceleratorTableW(&accel).unwrap_or_default();
+
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&msg);
-            let _ = DispatchMessageW(&msg);
+            if TranslateAcceleratorW(hwnd, haccel, &msg) == 0 {
+                let _ = TranslateMessage(&msg);
+                let _ = DispatchMessageW(&msg);
+            }
         }
     }
 }
