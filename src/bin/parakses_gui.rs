@@ -1004,12 +1004,7 @@ fn create_gui(hwnd: HWND) -> GuiState {
                 lvc.pszText = h_w.as_ptr();
                 lvc.cchTextMax = h.len() as i32;
                 lvc.iSubItem = i as i32;
-                SendMessageW(
-                    hwnd_list,
-                    LVM_INSERTCOLUMNW,
-                    i as usize,
-                    &lvc as *const _ as isize,
-                );
+                SendMessageW(hwnd_list, LVM_INSERTCOLUMNW, i, &lvc as *const _ as isize);
             }
         }
 

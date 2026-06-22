@@ -483,10 +483,10 @@ impl<'a> HfsCatalogReader<'a> {
             if key.parent_id() != parent_id {
                 continue;
             }
-            if key.node_name() == name {
-                if let Ok(data) = parse_hfs_catalog_record(&rec.value) {
-                    return Ok(Some(data));
-                }
+            if key.node_name() == name
+                && let Ok(data) = parse_hfs_catalog_record(&rec.value)
+            {
+                return Ok(Some(data));
             }
         }
         Ok(None)

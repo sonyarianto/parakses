@@ -282,10 +282,10 @@ impl HfsMdb {
             start_block: 0,
             block_count: 0,
         }; 3];
-        for i in 0..3 {
+        for (i, extent) in extents.iter_mut().enumerate() {
             let off = i * 4;
             if off + 4 <= data.len() {
-                extents[i] = HfsExtentDescriptor {
+                *extent = HfsExtentDescriptor {
                     start_block: read_u16_be(&data[off..]),
                     block_count: read_u16_be(&data[off + 2..]),
                 };

@@ -143,7 +143,7 @@ impl<'a> BTreeReader<'a> {
             };
 
             let raw = read_record(&node_data, off, next_off);
-            if raw.len() < 1 {
+            if raw.is_empty() {
                 continue;
             }
 
