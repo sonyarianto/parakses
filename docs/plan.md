@@ -30,8 +30,9 @@ A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Wi
 │   \\.\PhysicalDriveN )                   │
 ├──────────────────────────────────────────┤
 │      Windows Volume Discovery            │
-│  (MBR + GPT partition table parsing,     │
-│   detection via type 0xAF / Apple GUID)  │
+│  (MBR + GPT + APM partition parsing,    │
+│   detection via type 0xAF / Apple GUID /│
+│   "Apple_HFS"/"Apple_HFSX" type strings)│
 └──────────────────────────────────────────┘
 ```
 
@@ -43,13 +44,14 @@ A native Rust application that can read **HFS+ (Mac OS Extended)** volumes on Wi
 - Dependencies: `clap`, `anyhow`, `thiserror`, `log`, `env_logger`, `uuid`, `flate2` (optional)
 - Full module skeleton with all directories and stub files
 
-### Phase 1 — Windows Volume Discovery ✅
+### Phase 1 — Volume Discovery (MBR / GPT / APM) ✅
 
 - Enumerates `\\.\PhysicalDrive0` through `\\.\PhysicalDrive31`
 - Opens each drive with `CreateFileW` (raw Win32 FFI, no windows-sys crate)
 - Reads MBR (sector 0) to detect partition tables
 - Parses MBR partition entries (offset 0x1BE, type 0xAF = Apple HFS+)
 - Parses GPT header (LBA 1) + partition entries (Apple HFS+ GUID: `48465300-...`)
+- Parses APM (Apple Partition Map) entries at block 1, matching `"Apple_HFS"` / `"Apple_HFSX"` type strings
 - Returns list of detected HFS+ volumes with partition info
 
 ### Phase 2 — Raw Block I/O ✅
@@ -214,7 +216,7 @@ src/
 ├── error.rs              # Custom error types (ParaksesError)
 ├── volume/
 │   ├── mod.rs            # VolumeDiscovery trait
-│   ├── partition.rs      # MBR + GPT partition parsing, HFS+ type detection
+│   ├── partition.rs      # MBR + GPT + APM partition parsing, HFS+ type detection
 │   └── windows.rs        # WindowsVolumeEnumerator, HfsPartitionInfo
 ├── blockio/
 │   ├── mod.rs            # BlockDevice trait
@@ -304,7 +306,7 @@ HFS+ and HFS original volumes work end-to-end with both CLI and GUI:
 - `parakses list 0 / --image image_hfs_1.img` — shows 3 root entries (HFS original)
 - `parakses cat 0 /file5.txt --image image_hfs_1.img` — outputs file content
 - `parakses extract 0 /file5.txt out.txt --image image_hfs_1.img` — extracts file
-- `parakses volumes --image image.img` — detects HFS+ partitions inside a disk image
+- `parakses volumes --image image.img` — detects HFS+ partitions (MBR, GPT, or APM) inside a disk image
 
 **GUI:**
 - `cargo run --bin parakses_gui` (run as Administrator for physical drive access)

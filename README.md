@@ -196,7 +196,7 @@ src/
 │   └── parakses_gui.rs   # Native Windows GUI (Win32, windows crate)
 ├── cli.rs                # clap argument definitions
 ├── error.rs              # Custom error types
-├── volume/               # Volume discovery (MBR, GPT, Windows enumeration)
+├── volume/               # Volume discovery (MBR, GPT, APM, Windows enumeration)
 ├── blockio/              # Block device abstraction (physical drive, file, memory)
 ├── hfs/                  # HFS+ / HFS filesystem parser
 │   ├── btree/            # B-tree engine (generic, used by catalog + extents)
